@@ -5,42 +5,42 @@ import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import {
   Moon, Sun, Info, ScanFace, Activity, Lock, RefreshCcw,
   Settings2, Trash2, Volume2, VolumeX, Brain, List, Search,
-  Mic, MicOff, ArrowRight
+  Mic, MicOff, Database, Plus, Save, Cpu, Layers, Delete
 } from "lucide-react";
-import FeedbackSection from "@/components/feedBackSection";
 
 // --- Types ---
 
 interface Landmark { x: number; y: number; z: number; }
-
 interface Sample { label: string; landmarks: Landmark[]; }
-
 interface TrainingSample { label: string; vector: number[]; }
-
 interface CameraSettings { brightness: number; contrast: number; saturation: number; }
-
-interface GestureLibraryItem { emoji: string; title: string; description: string; image?: string; }
-
+interface GestureLibraryItem {
+  emoji: string;
+  title: string;
+  description: string;
+  image: string;
+}
 interface VideoStageProps {
-  videoRef: React.RefObject<HTMLVideoElement | null>;
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  videoRef: React.RefObject<HTMLVideoElement>;
+  canvasRef: React.RefObject<HTMLCanvasElement>;
   detectedLabel: string;
   confidence: number;
   isLocked: boolean;
   settings: CameraSettings;
+  isScanning: boolean;
 }
 
 // --- Inline UI Components ---
 
 const Card = ({ className, children }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={`rounded-xl border bg-card text-card-foreground shadow ${className || ""}`}>{children}</div>
+  <div className={`rounded-xl border bg-card text-card-foreground shadow-sm ${className || ""}`}>{children}</div>
 );
 
 const Button = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "default" | "destructive" | "outline" | "secondary" | "ghost", size?: "default" | "sm" | "icon" | "lg" }>(
   ({ className, variant = "default", size = "default", ...props }, ref) => {
     const variants = {
-      default: "bg-primary text-primary-foreground hover:bg-primary/90",
-      destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+      default: "bg-primary text-primary-foreground hover:bg-primary/90 shadow",
+      destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-sm",
       outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
       secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
       ghost: "hover:bg-accent hover:text-accent-foreground"
@@ -54,7 +54,7 @@ const Button = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HT
     return (
       <button
         ref={ref}
-        className={`inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 ${variants[variant]} ${sizes[size]} ${className || ""}`}
+        className={`inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 touch-manipulation ${variants[variant]} ${sizes[size]} ${className || ""}`}
         {...props}
       />
     );
@@ -122,187 +122,242 @@ function ModeToggle() {
   );
 }
 
-// --- Gesture Library & Logic ---
+// --- SAFE IMAGE COMPONENT ---
+const SignImage = ({ url, alt, emoji, className }: { url?: string, alt: string, emoji: string, className?: string }) => {
+  const [error, setError] = useState(false);
 
-const GESTURE_LIBRARY: Record<string, GestureLibraryItem> = {
-  "A": { emoji: "✊", title: "Letter A", description: "Fist with thumb resting against the side of the index finger." },
-  "B": { emoji: "🖐️", title: "Letter B", description: "Open palm, all fingers straight and touching, thumb tucked across palm." },
-  "C": { emoji: "🤟", title: "Letter C", description: "Curve all fingers and thumb to form a 'C' shape." },
-  "D": { emoji: "👆", title: "Letter D", description: "Index finger points up; thumb and other fingers form a circle." },
-  "E": { emoji: "👊", title: "Letter E", description: "Fingers curled down, thumb tucked underneath." },
-  "F": { emoji: "👌", title: "Letter F", description: "Touch thumb and index tips together; keep other three fingers up and spread." },
-  "G": { emoji: "👈", title: "Letter G", description: "Index finger and thumb extended parallel, pointing sideways like a pinch." },
-  "H": { emoji: "🤜", title: "Letter H", description: "Index and middle fingers extended together pointing sideways." },
-  "I": { emoji: "🤙", title: "Letter I", description: "Pinky finger extended straight up, all other fingers closed." },
-  "J": { emoji: "🤙", title: "Letter J", description: "Pinky finger makes a J swooping motion." },
-  "K": { emoji: "✌️", title: "Letter K", description: "Index up, middle finger points forward, thumb between them." },
-  "L": { emoji: "🇱", title: "Letter L", description: "Thumb and index finger extended to form an 'L' shape." },
-  "M": { emoji: "👊", title: "Letter M", description: "Fist with thumb tucked under first three fingers." },
-  "N": { emoji: "👊", title: "Letter N", description: "Fist with thumb tucked under first two fingers." },
-  "O": { emoji: "👌", title: "Letter O", description: "Fingers and thumb touch to make an O shape." },
-  "P": { emoji: "👇", title: "Letter P", description: "Index pointing down, middle finger down, thumb between." },
-  "Q": { emoji: "👇", title: "Letter Q", description: "Index and thumb pointing down." },
-  "R": { emoji: "🤞", title: "Letter R", description: "Index and middle fingers crossed." },
-  "S": { emoji: "✊", title: "Letter S", description: "Fist with thumb crossed over fingers." },
-  "T": { emoji: "✊", title: "Letter T", description: "Fist with thumb tucked between index and middle finger." },
-  "U": { emoji: "✌️", title: "Letter U", description: "Index and middle fingers extended straight up and touching." },
-  "V": { emoji: "✌️", title: "Letter V", description: "Index and middle fingers extended straight up in a 'V' shape." },
-  "W": { emoji: "🤟", title: "Letter W", description: "Index, middle, and ring fingers extended and spread." },
-  "X": { emoji: "☝️", title: "Letter X", description: "Index finger hooked like a pirate hook." },
-  "Y": { emoji: "🤙", title: "Letter Y", description: "Thumb and pinky finger extended, others tucked in." },
-  "Z": { emoji: "☝️", title: "Letter Z", description: "Index finger draws a Z in the air." },
-
-  // --- NUMBERS (STATIC) ---
-  "1": { emoji: "☝️", title: "Number 1", description: "Only index finger extended straight up." },
-  "2": { emoji: "✌️", title: "Number 2", description: "Index and middle fingers extended and spread." },
-  "3": { emoji: "🤟", title: "Number 3", description: "Thumb, index, and middle fingers extended." },
-  "4": { emoji: "🖖", title: "Number 4", description: "Four fingers extended and spread, thumb tucked in." },
-  "5": { emoji: "✋", title: "Number 5", description: "All fingers and thumb extended and spread wide." },
-
-  // --- PHRASES (STATIC) ---
-  "I Love You": { emoji: "🤟", title: "I Love You", description: "Thumb, index, and pinky extended; middle and ring fingers tucked." },
-  "OK": { emoji: "👌", title: "OK", description: "Thumb and index finger forming a circle, other fingers extended." }
-};
-
-const Finger = {
-  Thumb: 0,
-  Index: 1,
-  Middle: 2,
-  Ring: 3,
-  Pinky: 4,
-};
-
-// --- Math Helpers ---
-
-const calculateDistance = (p1: { x: number, y: number }, p2: { x: number, y: number }) => {
-  return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
-};
-
-const isExtended = (landmarks: Landmark[], fingerIdx: number) => {
-  const tip = landmarks[fingerIdx * 4 + 4];
-  const pip = landmarks[fingerIdx * 4 + 2];
-  const mcp = landmarks[fingerIdx * 4 + 1];
-
-  if (fingerIdx === Finger.Thumb) {
-    const distanceTipToPinky = calculateDistance(tip, landmarks[17]);
-    const distanceMcpToPinky = calculateDistance(mcp, landmarks[17]);
-    return distanceTipToPinky > distanceMcpToPinky;
+  if (!url || error) {
+    return (
+      <div className={`flex items-center justify-center select-none bg-muted/20 rounded-md ${className}`}>
+        <span className="leading-none" style={{ fontSize: '100%' }}>{emoji}</span>
+      </div>
+    );
   }
 
-  // Fingers usually point UP in standard webcam view
-  // We compare tip Y to PIP Y (remember Y increases downwards in canvas)
-  return calculateDistance(tip, landmarks[0]) > calculateDistance(pip, landmarks[0]);
+  return (
+    <img
+      src={url}
+      alt={alt}
+      className={`${className} object-contain dark:invert min-w-[50px] min-h-[50px] block w-full h-full`}
+      onError={() => setError(true)}
+    />
+  );
 };
 
-// We define these outside the component to ensure they are available
-function dist(p1: Landmark, p2: Landmark): number {
+// --- GESTURE LIBRARY ---
+const GESTURE_LIBRARY: Record<string, GestureLibraryItem> = {
+  "A": { emoji: "✊", title: "A", description: "Fist, thumb on side.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Sign_language_A.svg/236px-Sign_language_A.svg.png" },
+  "B": { emoji: "✋", title: "B", description: "Flat hand, thumb tucked.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/18/Sign_language_B.svg/203px-Sign_language_B.svg.png" },
+  "C": { emoji: "🫳", title: "C", description: "Hand curved like a cup.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Sign_language_C.svg/270px-Sign_language_C.svg.png" },
+  "D": { emoji: "☝️", title: "D", description: "Index up, others touching.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/06/Sign_language_D.svg/188px-Sign_language_D.svg.png" },
+  "E": { emoji: "👊", title: "E", description: "Fingers curled, thumb low.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Sign_language_E.svg/192px-Sign_language_E.svg.png" },
+  "F": { emoji: "👌", title: "F", description: "Thumb & Index touching.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Sign_language_F.svg/239px-Sign_language_F.svg.png" },
+  "G": { emoji: "👈", title: "G", description: "Pointing sideways.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/Sign_language_G.svg/373px-Sign_language_G.svg.png" },
+  "H": { emoji: "✌️", title: "H", description: "Two fingers sideways.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/Sign_language_H.svg/405px-Sign_language_H.svg.png" },
+  "I": { emoji: "🤙", title: "I", description: "Pinky straight up.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2b/Sign_language_I.svg/178px-Sign_language_I.svg.png" },
+  "J": { emoji: "🤙", title: "J", description: "Pinky swooping (Motion).", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/Sign_language_J.svg/236px-Sign_language_J.svg.png" },
+  "K": { emoji: "🤞", title: "K", description: "Thumb between Index & Middle.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/Sign_language_K.svg/182px-Sign_language_K.svg.png" },
+  "L": { emoji: "👆", title: "L", description: "L shape with thumb/index.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Sign_language_L.svg/213px-Sign_language_L.svg.png" },
+  "M": { emoji: "👊", title: "M", description: "Thumb under 3 fingers.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Sign_language_M.svg/207px-Sign_language_M.svg.png" },
+  "N": { emoji: "👊", title: "N", description: "Thumb under 2 fingers.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e6/Sign_language_N.svg/208px-Sign_language_N.svg.png" },
+  "O": { emoji: "👌", title: "O", description: "Fingers and thumb touch.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Sign_language_O.svg/276px-Sign_language_O.svg.png" },
+  "P": { emoji: "👇", title: "P", description: "Index down, middle down.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/08/Sign_language_P.svg/228px-Sign_language_P.svg.png" },
+  "Q": { emoji: "👇", title: "Q", description: "Index/Thumb down.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/34/Sign_language_Q.svg/228px-Sign_language_Q.svg.png" },
+  "R": { emoji: "🤞", title: "R", description: "Index/Middle crossed.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2e/Sign_language_R.svg/222px-Sign_language_R.svg.png" },
+  "S": { emoji: "✊", title: "S", description: "Fist, thumb OVER fingers.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/58/Sign_language_S.svg/199px-Sign_language_S.svg.png" },
+  "T": { emoji: "✊", title: "T", description: "Thumb under Index.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/13/Sign_language_T.svg/205px-Sign_language_T.svg.png" },
+  "U": { emoji: "✌️", title: "U", description: "Index/Middle together.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/Sign_language_U.svg/202px-Sign_language_U.svg.png" },
+  "V": { emoji: "✌️", title: "V", description: "Index/Middle spread.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Sign_language_V.svg/216px-Sign_language_V.svg.png" },
+  "W": { emoji: "🤟", title: "W", description: "3 Fingers spread.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Sign_language_W.svg/231px-Sign_language_W.svg.png" },
+  "X": { emoji: "☝️", title: "X", description: "Index hooked.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/Sign_language_X.svg/228px-Sign_language_X.svg.png" },
+  "Y": { emoji: "🤙", title: "Y", description: "Thumb & Pinky out.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Sign_language_Y.svg/276px-Sign_language_Y.svg.png" },
+  "Z": { emoji: "☝️", title: "Z", description: "Index draws Z (Motion).", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/Sign_language_Z.svg/228px-Sign_language_Z.svg.png" },
+  "1": { emoji: "☝️", title: "1", description: "Index up.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Sign_language_1.svg/132px-Sign_language_1.svg.png" },
+  "2": { emoji: "✌️", title: "2", description: "Index/Middle up.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/69/Sign_language_2.svg/148px-Sign_language_2.svg.png" },
+  "3": { emoji: "🤟", title: "3", description: "Thumb/Index/Middle.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2a/Sign_language_3.svg/178px-Sign_language_3.svg.png" },
+  "4": { emoji: "🖐", title: "4", description: "4 Fingers, thumb tucked.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e6/Sign_language_4.svg/170px-Sign_language_4.svg.png" },
+  "5": { emoji: "✋", title: "5", description: "All fingers spread.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/Sign_language_5.svg/222px-Sign_language_5.svg.png" },
+  "I Love You": { emoji: "🤘", title: "ILU", description: "Thumb, Index, Pinky.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Sign_language_I_love_you.svg/228px-Sign_language_I_love_you.svg.png" },
+  "OK": { emoji: "👌", title: "OK", description: "Thumb/Index ring.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Sign_language_F.svg/239px-Sign_language_F.svg.png" }
+};
+
+// --- Advanced Math Helpers ---
+const dist = (p1: Landmark, p2: Landmark) => {
   return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
-}
+};
 
-function isFingerExtended(landmarks: Landmark[], fingerName: string): boolean {
+const getFingerState = (landmarks: Landmark[], fingerName: string) => {
   const fingerMap: Record<string, number> = {
-    "Thumb": Finger.Thumb, "Index": Finger.Index, "Middle": Finger.Middle, "Ring": Finger.Ring, "Pinky": Finger.Pinky,
+    "Index": 1, "Middle": 2, "Ring": 3, "Pinky": 4,
   };
-  const fingerIdx = fingerMap[fingerName];
-  if (fingerIdx === undefined) return false;
-  return isExtended(landmarks, fingerIdx);
-}
+  const idx = fingerMap[fingerName];
+  const tip = landmarks[idx * 4 + 4];
+  const pip = landmarks[idx * 4 + 2];
+  const wrist = landmarks[0];
+  // Strict extension check (Tip must be further from wrist than PIP)
+  return dist(tip, wrist) > dist(pip, wrist) * 1.25;
+};
 
-function isFingerCurled(landmarks: Landmark[], fingerName: string): boolean {
-  return !isFingerExtended(landmarks, fingerName);
-}
+const isThumbExtended = (landmarks: Landmark[]) => {
+  const thumbTip = landmarks[4];
+  const thumbIP = landmarks[3];
+  const thumbMCP = landmarks[2];
+  const pinkyMCP = landmarks[17];
 
-// --- The Brains (Geometric Fallback - UPGRADED) ---
+  // Check 1: Distance from palm (Pinky base)
+  const isFarFromPalm = dist(thumbTip, pinkyMCP) > dist(thumbMCP, pinkyMCP) * 1.4;
+  // Check 2: Straightness of thumb
+  const isStraight = dist(thumbTip, thumbMCP) > dist(thumbIP, thumbMCP) * 1.05;
+
+  return isFarFromPalm && isStraight;
+};
+
+// --- SMART RECOGNITION LOGIC (REFINED v4) ---
 const recognizeGeometricGesture = (landmarks: Landmark[]) => {
   if (!landmarks || landmarks.length === 0) return null;
 
-  // Finger states (rotation-safe)
-  const thumb = isFingerExtended(landmarks, "Thumb");
-  const index = isFingerExtended(landmarks, "Index");
-  const middle = isFingerExtended(landmarks, "Middle");
-  const ring = isFingerExtended(landmarks, "Ring");
-  const pinky = isFingerExtended(landmarks, "Pinky");
+  const wrist = landmarks[0];
+  const thumbTip = landmarks[4];
+  const indexTip = landmarks[8];
+  const indexPIP = landmarks[6];
+  const indexMCP = landmarks[5];
+  const middleTip = landmarks[12];
+  const middleMCP = landmarks[9];
+  const ringTip = landmarks[16];
+  const ringMCP = landmarks[13];
+  const pinkyTip = landmarks[20];
+  const pinkyMCP = landmarks[17];
 
-  // Distances
-  const dThumbIndex = dist(landmarks[4], landmarks[8]);
-  const dIndexMiddle = dist(landmarks[8], landmarks[12]);
-  const dIndexPinky = dist(landmarks[8], landmarks[20]);
+  const indexExt = getFingerState(landmarks, "Index");
+  const middleExt = getFingerState(landmarks, "Middle");
+  const ringExt = getFingerState(landmarks, "Ring");
+  const pinkyExt = getFingerState(landmarks, "Pinky");
+  const thumbExt = isThumbExtended(landmarks);
 
-  // ---- HIGH CONFIDENCE FIRST ----
+  // 1. "OK" (Priority)
+  // Index and Thumb touching, others extended
+  if (middleExt && ringExt && pinkyExt) {
+    if (dist(thumbTip, indexTip) < 0.05) return "OK";
+  }
 
-  // I LOVE YOU
-  if (thumb && index && pinky && !middle && !ring) {
+  // 2. "C" vs "O" (Curved Hand)
+  // Fingers are NOT fully extended, but not fully closed
+  if (!middleExt && !ringExt && !pinkyExt) {
+    const thumbIndexDist = dist(thumbTip, indexTip);
+    const handOpenness = dist(indexTip, wrist);
+
+    // Check if fingers are curved (Tip roughly same distance to wrist as MCP)
+    const isCurved = dist(indexTip, wrist) < dist(indexMCP, wrist) * 1.5;
+
+    if (isCurved) {
+      if (thumbIndexDist < 0.05) return "O"; // Closed loop
+      if (thumbIndexDist > 0.05 && thumbIndexDist < 0.18) return "C"; // Open C
+    }
+  }
+
+  // 3. One Finger Up Group (1, D, L, Z)
+  if (indexExt && !middleExt && !ringExt && !pinkyExt) {
+    if (thumbExt) return "L";
+
+    // D: Thumb touches Middle/Ring tip
+    if (dist(thumbTip, middleTip) < 0.06 || dist(thumbTip, ringTip) < 0.06) return "D";
+
+    // Z: Handled by motion, but static Z is basically a 1
+    return "1";
+  }
+
+  // 4. Two Fingers Up Group (2, V, R, U, K)
+  if (indexExt && middleExt && !ringExt && !pinkyExt) {
+
+    // K Check: Thumb pushed UP between index and middle
+    if (thumbTip.y < indexMCP.y && dist(thumbTip, indexPIP) < 0.08) {
+      return "K";
+    }
+
+    // R Check: Fingers Crossed
+    // Logic: Compare X distance. If Index X > Middle X (for right hand), they are crossed.
+    // We use absolute difference logic to account for handedness implicitly via relative positions
+    const tipDiffX = indexTip.x - middleTip.x;
+    const mcpDiffX = indexMCP.x - middleMCP.x;
+
+    // If the sign flips between knuckles and tips, they are crossed
+    if (Math.sign(tipDiffX) !== Math.sign(mcpDiffX) && Math.abs(tipDiffX) > 0.015) {
+      return "R";
+    }
+
+    // U Check: Fingers parallel and touching
+    if (dist(indexTip, middleTip) < 0.045) return "U";
+
+    // V / 2 Check: Fingers spread
+    // 3 Check override: If thumb is OUT, it implies 3
+    if (thumbExt) return "3";
+
+    return "2";
+  }
+
+  // 5. Three Fingers Up Group (W, 3)
+  if (indexExt && middleExt && ringExt && !pinkyExt) {
+    return "W"; // Standard W
+  }
+
+  // 3: Thumb, Index, Middle (Thumb must be clearly out)
+  if (thumbExt && indexExt && middleExt && !ringExt && !pinkyExt) {
+    return "3";
+  }
+
+  // 6. Pinky Only (I, J, Y)
+  if (!indexExt && !middleExt && !ringExt && pinkyExt) {
+    if (thumbExt) return "Y"; // Phone gesture
+    return "I"; // Static I. (J is handled by motion)
+  }
+
+  // 7. I Love You (Thumb, Index, Pinky)
+  if (thumbExt && indexExt && !middleExt && !ringExt && pinkyExt) {
     return "I Love You";
   }
 
-  // F / OK
-  if (dThumbIndex < 0.05 && middle && ring && pinky) {
-    return "F";
+  // 8. Four/Five Fingers (4, 5)
+  if (indexExt && middleExt && ringExt && pinkyExt) {
+    // 4: Thumb tucked inside palm (Tip close to Index MCP)
+    if (!thumbExt || dist(thumbTip, indexMCP) < 0.08) return "4";
+    return "5";
   }
 
-  // A
-  if (!index && !middle && !ring && !pinky && thumb) {
+  // 9. The Fist Group (A, E, S, T, M, N)
+  // All fingers curled
+  if (!indexExt && !middleExt && !ringExt && !pinkyExt) {
+
+    // E: Thumb curled, tips touching palm
+    // Thumb tip is vertically similar to Index MCP, but pulled in
+    if (thumbTip.y > indexMCP.y && dist(thumbTip, indexMCP) < 0.1) return "E";
+
+    // S: Thumb WRAPPED over fingers (Crosses Middle Finger MCP)
+    if (Math.abs(thumbTip.x - middleMCP.x) < 0.05 && thumbTip.y < indexMCP.y) return "S";
+
+    // T: Thumb tucked UNDER Index finger (Between Index/Middle)
+    // Thumb tip is close to Index MCP/PIP
+    if (dist(thumbTip, indexMCP) < 0.06) return "T";
+
+    // M: Thumb under 3 fingers (Tip past Ring Finger)
+    // Compare X coordinates
+    if ((thumbTip.x > ringMCP.x && wrist.x < ringMCP.x) || (thumbTip.x < ringMCP.x && wrist.x > ringMCP.x)) return "M";
+
+    // N: Thumb under 2 fingers (Tip past Middle Finger)
+    if ((thumbTip.x > middleMCP.x && wrist.x < middleMCP.x) || (thumbTip.x < middleMCP.x && wrist.x > middleMCP.x)) return "N";
+
+    // A: Thumb on the side, vertical
+    // Default fist state
     return "A";
   }
-
-  // B
-  if (index && middle && ring && pinky && !thumb && dIndexPinky < 0.15) {
-    return "B";
-  }
-
-  // C
-  if (thumb && dIndexPinky > 0.12 && dIndexPinky < 0.25) {
-    return "C";
-  }
-
-  // D
-  if (index && !middle && !ring && !pinky && dThumbIndex < 0.05) {
-    return "D";
-  }
-
-  // G (sideways)
-  if (index && thumb && !middle && !ring && !pinky && dThumbIndex > 0.07) {
-    return "G";
-  }
-
-  // H
-  if (index && middle && !ring && !pinky && dIndexMiddle < 0.05) {
-    return "H";
-  }
-
-  // L
-  if (thumb && index && !middle && !ring && !pinky) {
-    return "L";
-  }
-
-  // I
-  if (pinky && !index && !middle && !ring) {
-    return "I";
-  }
-
-  // ---- NUMBERS / SIMPLE FALLBACKS ----
-
-  if (index && !middle && !ring && !pinky) return "1";
-  if (index && middle && !ring && !pinky) {
-    return dIndexMiddle < 0.05 ? "U" : "V";
-  }
-  if (thumb && index && middle && !ring && !pinky) return "3";
-  if (!thumb && index && middle && ring && pinky) return "4";
-  if (thumb && index && middle && ring && pinky) return "5";
-  if (thumb && pinky && !index && !middle && !ring) return "Y";
 
   return null;
 };
 
-
-// --- NEW ML Logic: k-Nearest Neighbors (k-NN) ---
-
+// --- KNN Logic ---
 const calculateEuclideanDistance = (v1: number[], v2: number[]): number => {
   if (v1.length !== v2.length) return Infinity;
   let sum = 0;
-  for (let i = 0; i < v1.length; i++) {
-    sum += Math.pow(v1[i] - v2[i], 2);
-  }
+  for (let i = 0; i < v1.length; i++) sum += Math.pow(v1[i] - v2[i], 2);
   return Math.sqrt(sum);
 };
 
@@ -310,52 +365,40 @@ const K = 5;
 
 const predictKNN = (inputVector: number[], trainingData: TrainingSample[]): { label: string, confidence: number } | null => {
   if (trainingData.length === 0 || inputVector.length === 0) return null;
-
   const distances = trainingData.map(sample => ({
     label: sample.label,
     distance: calculateEuclideanDistance(inputVector, sample.vector)
   }));
-
   distances.sort((a, b) => a.distance - b.distance);
   const neighbors = distances.slice(0, Math.min(K, trainingData.length));
-
   const votes: Record<string, { weight: number, count: number }> = {};
   let totalWeight = 0;
-
   neighbors.forEach(n => {
     const weight = 1 / (n.distance + 0.0001);
-
-    if (!votes[n.label]) {
-      votes[n.label] = { weight: 0, count: 0 };
-    }
+    if (!votes[n.label]) votes[n.label] = { weight: 0, count: 0 };
     votes[n.label].weight += weight;
     votes[n.label].count += 1;
     totalWeight += weight;
   });
-
   let winner: string | null = null;
   let maxWeight = -Infinity;
-
   Object.keys(votes).forEach(label => {
     if (votes[label].weight > maxWeight) {
       maxWeight = votes[label].weight;
       winner = label;
     }
   });
-
   if (!winner) return null;
-
   const confidence = totalWeight > 0 ? (maxWeight / totalWeight) : 0;
-
   return { label: winner, confidence: Math.min(confidence * 100, 100) };
 };
 
 // --- Drawing Helper ---
 const drawLandmarks = (ctx: CanvasRenderingContext2D | null, landmarks: Landmark[]) => {
   if (!ctx) return;
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   ctx.lineWidth = 2;
   const connections = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
-
   ctx.strokeStyle = "#00FF00";
   connections.forEach(([i, j]) => {
     ctx.beginPath();
@@ -363,7 +406,6 @@ const drawLandmarks = (ctx: CanvasRenderingContext2D | null, landmarks: Landmark
     ctx.lineTo(landmarks[j].x * ctx.canvas.width, landmarks[j].y * ctx.canvas.height);
     ctx.stroke();
   });
-
   landmarks.forEach((p, i) => {
     const x = p.x * ctx.canvas.width;
     const y = p.y * ctx.canvas.height;
@@ -383,15 +425,18 @@ function useLandmarker({
   canvasRef,
   onFrameProcessed
 }: {
-  videoRef: React.RefObject<HTMLVideoElement | null>,
-  canvasRef: React.RefObject<HTMLCanvasElement | null>,
+  videoRef: React.RefObject<HTMLVideoElement>,
+  canvasRef: React.RefObject<HTMLCanvasElement>,
   onFrameProcessed: (vector: number[], rawData: Landmark[]) => void
 }) {
   const [status, setStatus] = useState("Loading Model...");
+  const [isScanning, setIsScanning] = useState(false);
   const landmarkerRef = useRef<HandLandmarker | null>(null);
   const requestRef = useRef<number | null>(null);
-
   const onFrameProcessedRef = useRef(onFrameProcessed);
+
+  const lastPredictionTime = useRef(0);
+  const PREDICTION_INTERVAL = 50;
 
   useEffect(() => {
     onFrameProcessedRef.current = onFrameProcessed;
@@ -406,55 +451,50 @@ function useLandmarker({
       requestRef.current = requestAnimationFrame(predictWebcam);
       return;
     }
-
     const video = videoRef.current;
     const canvas = canvasRef.current;
-
     if (video.videoWidth === 0 || video.videoHeight === 0) {
       requestRef.current = requestAnimationFrame(predictWebcam);
       return;
     }
-
     const ctx = canvas.getContext("2d");
     if (canvas.width !== video.videoWidth) {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
     }
-
+    const now = Date.now();
+    if (now - lastPredictionTime.current < PREDICTION_INTERVAL) {
+      requestRef.current = requestAnimationFrame(predictWebcam);
+      return;
+    }
+    lastPredictionTime.current = now;
+    setIsScanning(true);
     const startTimeMs = performance.now();
-
     try {
       if (landmarkerRef.current) {
         const results = landmarkerRef.current.detectForVideo(video, startTimeMs);
-
-        ctx?.clearRect(0, 0, canvas.width, canvas.height);
-
         if (results.landmarks && results.landmarks.length > 0) {
           const landmarks = results.landmarks[0] as Landmark[];
           drawLandmarks(ctx, landmarks);
           const vector = extractVector(landmarks);
-
           onFrameProcessedRef.current(vector, landmarks);
         } else {
+          ctx?.clearRect(0, 0, canvas.width, canvas.height);
           onFrameProcessedRef.current([], []);
         }
       }
     } catch (e) {
       console.warn(e);
     }
-
+    setTimeout(() => setIsScanning(false), 50);
     requestRef.current = requestAnimationFrame(predictWebcam);
   }, [videoRef, canvasRef]);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
     let isCancelled = false;
-
     const initLandmarker = async () => {
-      if (typeof window === 'undefined' || !navigator.mediaDevices) {
-        if (!isCancelled) setStatus("Not in a browser environment.");
-        return;
-      }
+      if (typeof window === 'undefined' || !navigator.mediaDevices) return;
       try {
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
@@ -470,46 +510,40 @@ function useLandmarker({
           minHandPresenceConfidence: 0.5,
           minTrackingConfidence: 0.5
         });
-
         if (!isCancelled) setStatus("Starting Camera...");
         startCamera();
       } catch (error) {
-        console.error("Landmarker Init Error:", error);
+        console.error(error);
         if (!isCancelled) setStatus("Failed to load AI.");
       }
     };
-
     const startCamera = async () => {
       if (videoRef.current && navigator.mediaDevices) {
         try {
           stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 640, height: 480 }
+            video: { width: 640, height: 480, facingMode: "user" }
           });
-
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
             videoRef.current.onloadeddata = () => {
               predictWebcam();
-              if (!isCancelled) setStatus("Ready: Show Hand");
+              if (!isCancelled) setStatus("Ready");
             };
           }
         } catch (err) {
-          console.error("Camera Init Error:", err);
-          if (!isCancelled) setStatus("Camera Error (Check Permissions)");
+          console.error(err);
+          if (!isCancelled) setStatus("Camera Error");
         }
       }
     };
-
     initLandmarker();
-
     return () => {
       isCancelled = true;
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
       if (stream) stream.getTracks().forEach(track => track.stop());
     };
   }, [predictWebcam, videoRef]);
-
-  return { status };
+  return { status, isScanning };
 }
 
 // --- usePredictionModel Hook ---
@@ -523,27 +557,37 @@ function usePredictionModel() {
 
   const trainingDataRef = useRef<TrainingSample[]>([]);
   const [mlDataSize, setMlDataSize] = useState(0);
+  const [trainedClasses, setTrainedClasses] = useState<string[]>([]);
 
   const bufferRef = useRef<string[]>([]);
-  const wristXBufferRef = useRef<number[]>([]);
   const lastSuccessfulDetectionTime = useRef<number>(0);
+  const prevIndexPos = useRef<{ x: number, y: number } | null>(null);
+  const motionBuffer = useRef<number[]>([]);
 
-  const PREDICTION_BUFFER_SIZE = 8;
-  const WRIST_BUFFER_SIZE = 20;
-  const SCAN_DELAY_MS = 1000;
+  // Increased buffer size for consistency (was 5, now 10)
+  const PREDICTION_BUFFER_SIZE = 10;
+  const SCAN_DELAY_MS = 800;
 
   const loadMLModel = (data: TrainingSample[]) => {
     trainingDataRef.current = data;
     setMlDataSize(data.length);
+    const unique = Array.from(new Set(data.map(d => d.label)));
+    setTrainedClasses(unique);
+  };
+
+  const clearModel = () => {
+    trainingDataRef.current = [];
+    setMlDataSize(0);
+    setTrainedClasses([]);
+    setModelType("geometric"); // Fallback
   };
 
   const predict = (inputVector: number[], rawLandmarks: Landmark[]): string | null => {
     if (modelType === "none" || !rawLandmarks || rawLandmarks.length === 0) {
-      setDebugStatus("No Hand Detected");
+      setDebugStatus("No Hand");
       setConfidence(0);
       setIsLocked(false);
       bufferRef.current = [];
-      wristXBufferRef.current = [];
       setDetectedLabel("");
       return null;
     }
@@ -559,44 +603,38 @@ function usePredictionModel() {
     if (modelType === "geometric") {
       result = recognizeGeometricGesture(rawLandmarks);
 
-      const currentWristX = rawLandmarks[0].x;
-      wristXBufferRef.current.push(currentWristX);
-      if (wristXBufferRef.current.length > WRIST_BUFFER_SIZE) {
-        wristXBufferRef.current.shift();
-      }
-
-      // Dynamic Hello Wave Check
-      if ((result === "B" || result === "5") && wristXBufferRef.current.length === WRIST_BUFFER_SIZE) {
-        const xValues = wristXBufferRef.current;
-        const travel = xValues.reduce((acc, val, i) => i === 0 ? 0 : acc + Math.abs(val - xValues[i - 1]), 0);
-        const displacement = Math.abs(xValues[xValues.length - 1] - xValues[0]);
-
-        if (travel > 0.4 && displacement < 0.3) {
-          result = "Hello";
+      // Z Motion Logic
+      if (result === "1" || result === "D") {
+        const indexTip = rawLandmarks[8];
+        if (prevIndexPos.current) {
+          const dx = Math.abs(indexTip.x - prevIndexPos.current.x);
+          const dy = Math.abs(indexTip.y - prevIndexPos.current.y);
+          const velocity = Math.sqrt(dx * dx + dy * dy);
+          motionBuffer.current.push(velocity);
+          if (motionBuffer.current.length > 5) motionBuffer.current.shift();
+          const avgVel = motionBuffer.current.reduce((a, b) => a + b, 0) / motionBuffer.current.length;
+          // Increased threshold to prevent detecting Z on shaky hands
+          if (avgVel > 0.04) result = "Z";
         }
+        prevIndexPos.current = { x: indexTip.x, y: indexTip.y };
+      } else {
+        motionBuffer.current = [];
       }
-
     } else if (modelType === "ml") {
-      if (trainingDataRef.current.length > K) {
+      if (trainingDataRef.current.length >= K) {
         const wrist = rawLandmarks[0];
         const normalizedInput = rawLandmarks.flatMap(p => [
-          p.x - wrist.x,
-          p.y - wrist.y,
-          p.z - wrist.z
+          p.x - wrist.x, p.y - wrist.y, p.z - wrist.z
         ]);
-
         const mlPrediction = predictKNN(normalizedInput, trainingDataRef.current);
-        if (mlPrediction) {
-          result = mlPrediction.label;
-        }
+        if (mlPrediction) result = mlPrediction.label;
       } else {
-        setDebugStatus(`ML Mode: Need at least ${K} samples to predict.`);
-        setConfidence(0);
+        setDebugStatus(`Need ${K}+ samples`);
         return null;
       }
     }
 
-    setDebugStatus(result ? `Match: ${result} (${modelType.toUpperCase()} Mode)` : "Hand Detected - Unknown Pose");
+    setDebugStatus(result ? `Found: ${result}` : "Unknown");
 
     if (!result) {
       setConfidence(0);
@@ -610,14 +648,14 @@ function usePredictionModel() {
 
     const counts: Record<string, number> = {};
     bufferRef.current.forEach((g) => { counts[g] = (counts[g] || 0) + 1; });
-
     const winner = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, "");
     const winCount = counts[winner];
     const calcConfidence = Math.round((winCount / bufferRef.current.length) * 100);
 
     setConfidence(calcConfidence);
 
-    if (winCount > PREDICTION_BUFFER_SIZE * 0.75) {
+    // Consistency Check: Require >70% of buffer to match
+    if (winCount > PREDICTION_BUFFER_SIZE * 0.7) {
       if (winner !== detectedLabel) {
         lastSuccessfulDetectionTime.current = Date.now();
       }
@@ -638,40 +676,36 @@ function usePredictionModel() {
     isLocked,
     trainingDataRef,
     mlDataSize,
-    loadMLModel
+    loadMLModel,
+    clearModel,
+    trainedClasses
   };
 }
 
 // --- useTextToSpeech Hook ---
-
 function useTextToSpeech() {
   const [enabled, setEnabled] = useState(true);
   const lastSpokenRef = useRef<string>("");
   const lastTimeRef = useRef<number>(0);
-
   const speak = (text: string) => {
     if (!enabled || !text) return;
     const now = Date.now();
     if (text === lastSpokenRef.current && now - lastTimeRef.current < 2000) return;
-
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(text);
     window.speechSynthesis.speak(utter);
-
     lastSpokenRef.current = text;
     lastTimeRef.current = now;
   };
-
   const toggle = () => setEnabled((prev) => !prev);
   return { enabled, toggle, speak };
 }
 
-// --- NEW HOOK: Voice to Sign Recognition ---
+// --- useSpeechToSign Hook ---
 function useSpeechToSign() {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [isSupported, setIsSupported] = useState(true);
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
 
@@ -684,24 +718,17 @@ function useSpeechToSign() {
       recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
-
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       recognition.onresult = (event: any) => {
         let finalTranscript = "";
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          }
+          if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
         }
-        if (finalTranscript) {
-          setTranscript(finalTranscript);
-        }
+        if (finalTranscript) setTranscript(finalTranscript);
       };
-
       recognition.onend = () => {
-        if (isListening) recognition.start(); // Keep listening
+        if (isListening) recognition.start();
       };
-
       recognitionRef.current = recognition;
     } else {
       setIsSupported(false);
@@ -719,21 +746,17 @@ function useSpeechToSign() {
       setTranscript("");
     }
   };
-
   return { isListening, transcript, toggleListen, isSupported, setTranscript };
 }
 
 // --- useDataCollection Hook ---
-
 function useDataCollection(trainingDataRef: React.MutableRefObject<TrainingSample[]>) {
   const [collecting, setCollecting] = useState(false);
   const [sampleCount, setSampleCount] = useState(0);
   const activeLabelRef = useRef("");
   const dataBufferRef = useRef<Sample[]>([]);
-
-  // Cooldown tracking for individual samples
   const lastSampleTimeRef = useRef<number>(0);
-  const SAMPLE_COOLDOWN_MS = 200; // 5 samples per second max
+  const SAMPLE_COOLDOWN_MS = 200;
 
   const startCollecting = (lbl: string) => {
     if (!lbl) return alert("Enter label");
@@ -747,41 +770,32 @@ function useDataCollection(trainingDataRef: React.MutableRefObject<TrainingSampl
 
   const addSample = (vec: number[], raw: Landmark[]) => {
     const now = Date.now();
-    // Check cooldown before adding a new sample
     if (collecting && raw.length > 0 && (now - lastSampleTimeRef.current > SAMPLE_COOLDOWN_MS)) {
       dataBufferRef.current.push({ label: activeLabelRef.current, landmarks: raw });
       setSampleCount(dataBufferRef.current.length);
-      lastSampleTimeRef.current = now; // Update time after a successful collection
+      lastSampleTimeRef.current = now;
     }
   }
 
-  const trainModel = () => {
-    if (dataBufferRef.current.length === 0) return alert("No samples collected to train the model.");
-
+  const addToModel = () => {
+    if (dataBufferRef.current.length === 0) return null;
     const newTrainingData: TrainingSample[] = dataBufferRef.current.map(sample => {
       const wrist = sample.landmarks[0];
       const normalizedVector = sample.landmarks.flatMap(p => [
-        p.x - wrist.x,
-        p.y - wrist.y,
-        p.z - wrist.z
+        p.x - wrist.x, p.y - wrist.y, p.z - wrist.z
       ]);
-
       return { label: sample.label, vector: normalizedVector };
     });
-
     trainingDataRef.current = [...trainingDataRef.current, ...newTrainingData];
-
     setCollecting(false);
     dataBufferRef.current = [];
     setSampleCount(0);
-
     return trainingDataRef.current;
   };
 
   const saveDataset = () => {
     const fullDataset = trainingDataRef.current;
-    if (fullDataset.length === 0) return alert("No data available to download.");
-
+    if (fullDataset.length === 0) return alert("No data.");
     const blob = new Blob([JSON.stringify(fullDataset)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -802,7 +816,7 @@ function useDataCollection(trainingDataRef: React.MutableRefObject<TrainingSampl
             const data = JSON.parse(e.target?.result as string) as TrainingSample[];
             onLoad(data);
           } catch (error) {
-            alert("Failed to parse JSON file.");
+            alert("Failed to parse.");
           }
         };
         reader.readAsText(file);
@@ -811,49 +825,29 @@ function useDataCollection(trainingDataRef: React.MutableRefObject<TrainingSampl
     input.click();
   };
 
-  return {
-    collecting,
-    sampleCount,
-    startCollecting,
-    stopCollecting,
-    addSample,
-    saveDataset,
-    trainModel,
-    loadDataset
-  };
+  return { collecting, sampleCount, startCollecting, stopCollecting, addSample, saveDataset, addToModel, loadDataset };
 }
 
-// --- NEW COMPONENT: Voice to Sign Player (THEME AWARE & BIGGER UI) ---
+// --- Voice to Sign Player ---
 function VoiceSignPlayer({ transcript, isListening, toggleListen }: { transcript: string, isListening: boolean, toggleListen: () => void }) {
   const [currentSign, setCurrentSign] = useState<GestureLibraryItem | null>(null);
   const [queue, setQueue] = useState<string[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
 
-  // Parse transcript into gesture queue
   useEffect(() => {
     if (!transcript) return;
-
     const words = transcript.trim().toUpperCase().split(/\s+/);
     const newQueue: string[] = [];
-
     words.forEach(word => {
-      // 1. Check if whole word exists in Library (e.g., "HELLO")
       const libKey = Object.keys(GESTURE_LIBRARY).find(k => k.toUpperCase() === word);
-
-      if (libKey) {
-        newQueue.push(libKey);
-      } else {
-        // 2. Fallback: Fingerspell the word
-        const letters = word.split("");
-        letters.forEach(char => {
-          if (GESTURE_LIBRARY[char]) {
-            newQueue.push(char);
-          }
+      if (libKey) newQueue.push(libKey);
+      else {
+        word.split("").forEach(char => {
+          if (GESTURE_LIBRARY[char]) newQueue.push(char);
         });
       }
     });
-
     if (newQueue.length > 0) {
       setQueue(newQueue);
       setIsPlaying(true);
@@ -861,10 +855,8 @@ function VoiceSignPlayer({ transcript, isListening, toggleListen }: { transcript
     }
   }, [transcript]);
 
-  // Playback Loop
   useEffect(() => {
     if (!isPlaying || queue.length === 0) return;
-
     const interval = setInterval(() => {
       if (currentIndex < queue.length) {
         const key = queue[currentIndex];
@@ -876,18 +868,12 @@ function VoiceSignPlayer({ transcript, isListening, toggleListen }: { transcript
         setCurrentIndex(0);
         clearInterval(interval);
       }
-    }, 1200); // Speed of playback
-
+    }, 1200);
     return () => clearInterval(interval);
   }, [isPlaying, currentIndex, queue]);
 
-  // Preview of next sign
-  const nextKey = queue[currentIndex] || null;
-  const nextSign = nextKey ? GESTURE_LIBRARY[nextKey] : null;
-
   return (
     <Card className="flex flex-col h-full overflow-hidden border-2 border-primary/20 shadow-xl bg-card">
-      {/* Header */}
       <div className="p-4 border-b bg-muted/20 flex justify-between items-center">
         <h3 className="font-bold text-lg uppercase flex items-center gap-2 text-primary">
           <Mic className="w-5 h-5" /> Voice to Sign
@@ -898,65 +884,45 @@ function VoiceSignPlayer({ transcript, isListening, toggleListen }: { transcript
           onClick={toggleListen}
           className={`font-semibold ${isListening ? "animate-pulse" : ""}`}
         >
-          {isListening ? <><MicOff className="w-4 h-4 mr-2" /> Stop Listening</> : <><Mic className="w-4 h-4 mr-2" /> Start Listening</>}
+          {isListening ? <><MicOff className="w-4 h-4 mr-2" /> Stop</> : <><Mic className="w-4 h-4 mr-2" /> Listen</>}
         </Button>
       </div>
-
-      {/* Main Stage (Adapts to Light/Dark Mode) */}
       <div className="flex-grow bg-background flex flex-col items-center justify-center relative p-8 min-h-[300px]">
         {currentSign ? (
           <div className="text-center animate-in zoom-in duration-200 flex flex-col items-center">
-            {/* The BIG Emoji */}
-            <div className="text-[150px] leading-none mb-6 drop-shadow-2xl filter hover:brightness-110 transition-all select-none">
-              {currentSign.emoji}
+            <div className="mb-4 drop-shadow-2xl filter hover:brightness-110 transition-all select-none">
+              <div className="relative w-32 h-32 md:w-48 md:h-48 flex items-center justify-center">
+                <SignImage
+                  url={currentSign.image}
+                  alt={currentSign.title}
+                  emoji={currentSign.emoji}
+                  className="w-full h-full text-[120px] md:text-[150px]"
+                />
+              </div>
             </div>
-
-            {/* The Text Label */}
-            <div className="bg-card text-primary px-8 py-3 rounded-full text-3xl font-black shadow-lg border border-primary/20">
+            <div className="bg-card text-primary px-8 py-3 rounded-full text-2xl md:text-3xl font-black shadow-lg border border-primary/20">
               {currentSign.title}
             </div>
-
-            {/* Description */}
-            <p className="text-muted-foreground mt-4 text-sm max-w-xs">{currentSign.description}</p>
           </div>
         ) : (
           <div className="text-center text-muted-foreground flex flex-col items-center gap-6">
             {isListening ? (
-              <>
-                <div className="relative">
-                  <div className="w-32 h-32 rounded-full bg-primary/20 animate-ping absolute inset-0" />
-                  <div className="w-32 h-32 rounded-full bg-primary/10 flex items-center justify-center border-4 border-primary/30 relative z-10">
-                    <Mic className="w-12 h-12 text-primary" />
-                  </div>
-                </div>
-                <p className="text-xl font-medium animate-pulse text-primary">Listening for speech...</p>
-              </>
+              <p className="text-xl font-medium animate-pulse text-primary">Listening...</p>
             ) : (
-              <>
-                <MicOff className="w-24 h-24 opacity-20" />
-                <p className="text-lg">Click &quot;Start Listening&quot; to translate voice</p>
-              </>
+              <div className="flex flex-col items-center">
+                <MicOff className="w-16 h-16 opacity-20 mb-2" />
+                <p className="text-sm">Tap Listen</p>
+              </div>
             )}
           </div>
         )}
-
-        {/* Next Up Preview (Small indicator at bottom right) */}
-        {isPlaying && nextSign && (
-          <div className="absolute bottom-4 right-4 bg-muted/80 backdrop-blur-md p-2 rounded-lg border border-border flex items-center gap-2 text-muted-foreground text-xs shadow-sm">
-            <span>Next:</span>
-            <span className="text-xl">{nextSign.emoji}</span>
-            <ArrowRight className="w-3 h-3" />
-          </div>
-        )}
       </div>
-
-      {/* Transcript Footer */}
       <div className="p-4 border-t bg-muted/10 min-h-[80px]">
         <p className="text-xs font-bold uppercase text-muted-foreground mb-2 flex items-center gap-2">
-          <Activity className="w-3 h-3" /> Live Transcript
+          <Activity className="w-3 h-3" /> Transcript
         </p>
-        <p className="text-xl font-medium text-foreground leading-relaxed">
-          {transcript || <span className="text-muted-foreground/40 italic">Waiting for speech...</span>}
+        <p className="text-lg font-medium text-foreground leading-relaxed">
+          {transcript || <span className="text-muted-foreground/40 italic">...</span>}
         </p>
       </div>
     </Card>
@@ -966,13 +932,13 @@ function VoiceSignPlayer({ transcript, isListening, toggleListen }: { transcript
 // --- Main Component ---
 
 export default function ASLRecorder() {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const predictor = usePredictionModel();
   const collector = useDataCollection(predictor.trainingDataRef);
   const tts = useTextToSpeech();
-  const speech = useSpeechToSign(); // NEW HOOK
+  const speech = useSpeechToSign();
 
   const [inputLabel, setInputLabel] = useState("");
   const [sentence, setSentence] = useState("");
@@ -980,12 +946,9 @@ export default function ASLRecorder() {
   const [searchQuery, setSearchQuery] = useState("");
 
   const [camSettings, setCamSettings] = useState<CameraSettings>({
-    brightness: 100,
-    contrast: 100,
-    saturation: 100
+    brightness: 100, contrast: 100, saturation: 100
   });
 
-  // --- Optimization: Memoize the Filtered Library ---
   const filteredLibrary = useMemo(() => {
     const entries = Object.entries(GESTURE_LIBRARY);
     if (!searchQuery.trim()) return entries;
@@ -997,26 +960,32 @@ export default function ASLRecorder() {
   }, [searchQuery]);
 
   const resetCamSettings = () => setCamSettings({ brightness: 100, contrast: 100, saturation: 100 });
+
   const lastAddedTimeRef = useRef<number>(0);
-  const SENTENCE_ADD_COOLDOWN = 2000;
+  const SENTENCE_ADD_COOLDOWN = 1000;
+
+  // --- NEW: BACKSPACE FUNCTION ---
+  const handleBackspace = () => {
+    setSentence(prev => {
+      const words = prev.trim().split(" ");
+      if (words.length <= 1) return "";
+      return words.slice(0, -1).join(" ");
+    });
+  };
 
   const handleFrame = useCallback((vector: number[], rawData: Landmark[]) => {
     if (collector.collecting) collector.addSample(vector, rawData);
-
     if (predictor.modelType !== "none") {
       const result = predictor.predict(vector, rawData);
-
       if (result && result !== predictor.detectedLabel) {
         predictor.setDetectedLabel(result);
         tts.speak(result);
       }
-
       if (result && predictor.confidence > 80 && !predictor.isLocked) {
         const now = Date.now();
         if (now - lastAddedTimeRef.current > SENTENCE_ADD_COOLDOWN) {
           const sentenceParts = sentence.trim().split(/\s+/);
           const lastWord = sentenceParts[sentenceParts.length - 1];
-
           setSentence(prev => lastWord === result ? prev : `${prev.trim()} ${result}`);
           lastAddedTimeRef.current = now;
         }
@@ -1024,86 +993,209 @@ export default function ASLRecorder() {
     }
   }, [collector, predictor, tts, sentence]);
 
-  const { status: cameraStatus } = useLandmarker({
+  const { status: cameraStatus, isScanning } = useLandmarker({
     videoRef,
     canvasRef,
     onFrameProcessed: handleFrame
   });
 
-  const handleTrainModel = () => {
-    const newTrainingData = collector.trainModel();
-    if (newTrainingData) {
+  const handleAddToModel = () => {
+    const updatedData = collector.addToModel();
+    if (updatedData) {
       predictor.setModelType("ml");
-      predictor.setDetectedLabel("Model Trained!");
-      predictor.loadMLModel(newTrainingData);
-      alert(`Trained model with ${newTrainingData.length} samples. Switched to ML Mode.`);
+      predictor.loadMLModel(updatedData);
     }
   };
 
   return (
-    <div className="min-h-screen w-full flex flex-col items-center py-6 px-4 bg-background text-foreground transition-colors font-sans overflow-x-hidden">
+    <div className="min-h-screen w-full flex flex-col items-center py-4 px-2 md:px-4 bg-background text-foreground transition-colors font-sans overflow-x-hidden">
 
       {/* Header */}
-      <div className="flex items-center justify-between w-full max-w-[1600px] mb-6 px-2">
+      <div className="flex items-center justify-between w-full max-w-[1600px] mb-4 px-2">
         <div className="flex flex-col">
-          <h1 className="text-3xl font-bold tracking-tight">GAMAY — ASL Trainer</h1>
-          <p className="text-muted-foreground">Learn ASL with real-time feedback</p>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">GAMAY</h1>
+          <p className="text-xs md:text-sm text-muted-foreground">ASL Trainer</p>
         </div>
 
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setIsFeedbackOpen(true)}>
-            <Info className="w-4 h-4 mr-2" /> Feedback
+          <Button variant="outline" size="sm" onClick={() => setIsFeedbackOpen(true)}>
+            <Info className="w-4 h-4" />
           </Button>
           <ModeToggle />
         </div>
       </div>
 
-      {/* Main Grid Layout - 4 Columns */}
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 w-full max-w-[1600px]">
+      {/* Main Grid Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 w-full max-w-[1600px] mb-20">
 
-        {/* Column 1: Hand Info & ML Controls */}
-        <div className="xl:col-span-1 flex flex-col gap-4">
-          <GestureInfoCard label={predictor.detectedLabel} />
+        {/* SECTION 1: Video & Translation */}
+        <div className="lg:col-span-2 flex flex-col items-center gap-4 lg:order-2">
+          <VideoStage
+            videoRef={videoRef}
+            canvasRef={canvasRef}
+            detectedLabel={predictor.detectedLabel}
+            confidence={predictor.confidence}
+            isLocked={predictor.isLocked}
+            settings={camSettings}
+            isScanning={isScanning}
+          />
 
-          {/* ML Model Controls */}
-          <Card className="p-4 flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold flex items-center gap-2">
-                <Brain className="w-4 h-4 text-purple-600" /> ML Model
+          <div className="flex gap-2 md:gap-6 text-xs md:text-sm bg-muted/50 px-4 py-2 rounded-full border shadow-sm items-center w-full justify-between md:justify-center flex-wrap">
+            <span className="flex items-center gap-2">
+              <ScanFace className="w-4 h-4 text-primary" />
+              {cameraStatus}
+            </span>
+            <span className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-blue-500" />
+              Conf: <span className="font-bold">{predictor.confidence}%</span>
+            </span>
+          </div>
+
+          <div className="w-full">
+            <SentenceDisplay
+              sentence={sentence}
+              onClear={() => setSentence("")}
+              onBackspace={handleBackspace} // Passed here
+            />
+          </div>
+
+          <div className="w-full flex flex-col gap-4 p-4 border rounded-lg bg-card/50">
+            <div className="flex justify-between items-center">
+              <h3 className="font-semibold text-lg flex items-center gap-2">
+                Audio
               </h3>
               <Button
-                variant={predictor.modelType === 'geometric' ? 'secondary' : 'default'}
+                variant="outline"
                 size="sm"
-                onClick={() => predictor.setModelType(predictor.modelType === 'geometric' ? 'ml' : 'geometric')}
-                disabled={predictor.mlDataSize < K}
+                onClick={tts.toggle}
+                className={tts.enabled ? "text-green-600 border-green-200" : "text-muted-foreground"}
               >
-                {predictor.modelType === 'geometric' ? 'Geometric' : 'k-NN Active'}
+                {tts.enabled ? <><Volume2 className="w-4 h-4 mr-2" /> On</> : <><VolumeX className="w-4 h-4 mr-2" /> Off</>}
               </Button>
             </div>
             <Separator />
-            <div className="space-y-2 text-sm">
-              <p className="text-muted-foreground">Training Samples Loaded: <span className="font-bold text-primary">{predictor.mlDataSize}</span></p>
-              <p className="text-muted-foreground">Active Mode: <span className="font-bold">{predictor.modelType.toUpperCase()}</span></p>
-              <p className={`text-xs ${predictor.mlDataSize < K ? 'text-yellow-600' : 'text-muted-foreground'}`}>
-                k-NN Mode requires a minimum of {K} samples to operate.
-              </p>
+
+            {/* EXPANDED TRAINING STUDIO */}
+            <details className="text-sm text-muted-foreground cursor-pointer group" open>
+              <summary className="hover:text-primary transition-colors font-medium text-base p-2 border rounded-md flex items-center justify-between select-none bg-secondary/10">
+                <span className="flex items-center gap-2"><Cpu className="w-4 h-4" /> Training Studio</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${collector.collecting ? 'bg-red-500/20 text-red-500' : 'bg-muted'}`}>
+                  {collector.collecting ? 'REC' : 'IDLE'}
+                </span>
+              </summary>
+
+              <div className="mt-4 space-y-4 p-4 border rounded bg-background">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase text-muted-foreground">1. Label Sign</label>
+                    <Input
+                      placeholder="e.g. 'Hello'"
+                      value={inputLabel}
+                      onChange={(e) => setInputLabel(e.target.value)}
+                      disabled={collector.collecting}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase text-muted-foreground">2. Capture</label>
+                    <Button
+                      className="w-full"
+                      variant={collector.collecting ? "destructive" : "secondary"}
+                      onClick={() => collector.collecting ? collector.stopCollecting() : collector.startCollecting(inputLabel)}
+                      disabled={!inputLabel}
+                    >
+                      {collector.collecting ? `Stop Recording (${collector.sampleCount})` : "Hold to Record"}
+                    </Button>
+                  </div>
+                </div>
+
+                <Button
+                  variant="default"
+                  onClick={handleAddToModel}
+                  disabled={collector.sampleCount === 0 || collector.collecting}
+                  className="w-full h-12 text-lg"
+                >
+                  <Plus className="w-5 h-5 mr-2" /> Add to Model
+                </Button>
+
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <Button variant="outline" size="sm" onClick={collector.saveDataset}><Save className="w-3 h-3 mr-2" /> Save File</Button>
+                  <Button variant="outline" size="sm" onClick={() => collector.loadDataset(predictor.loadMLModel)}><Database className="w-3 h-3 mr-2" /> Load File</Button>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        {/* SECTION 2: Info & Settings & NEW MODEL CONTROL */}
+        <div className="lg:col-span-1 flex flex-col gap-4 lg:order-1">
+          <GestureInfoCard label={predictor.detectedLabel} />
+
+          {/* NEW: Model Controller */}
+          <Card className="p-4 flex flex-col gap-4 border-l-4 border-l-purple-500">
+            <div className="flex flex-col gap-2">
+              <h3 className="font-semibold flex items-center gap-2 text-sm">
+                <Brain className="w-4 h-4 text-purple-600" /> Model Mode
+              </h3>
+              <div className="grid grid-cols-2 gap-2 bg-muted p-1 rounded-lg">
+                <button
+                  onClick={() => predictor.setModelType("geometric")}
+                  className={`text-xs font-bold py-2 rounded-md transition-all ${predictor.modelType === 'geometric' ? 'bg-background shadow text-primary' : 'text-muted-foreground hover:bg-background/50'}`}
+                >
+                  Geometric
+                </button>
+                <button
+                  onClick={() => predictor.setModelType("ml")}
+                  className={`text-xs font-bold py-2 rounded-md transition-all ${predictor.modelType === 'ml' ? 'bg-purple-600 text-white shadow' : 'text-muted-foreground hover:bg-background/50'}`}
+                >
+                  Machine Learning
+                </button>
+              </div>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <h4 className="text-xs font-bold uppercase text-muted-foreground flex items-center gap-2">
+                  <Layers className="w-3 h-3" /> Active Classes
+                </h4>
+                <span className="text-[10px] bg-primary/10 text-primary px-2 rounded-full">{predictor.trainedClasses.length}</span>
+              </div>
+
+              <div className="max-h-[150px] overflow-y-auto space-y-1 bg-muted/20 p-2 rounded-md custom-scrollbar">
+                {predictor.trainedClasses.length > 0 ? (
+                  predictor.trainedClasses.map(cls => (
+                    <div key={cls} className="text-xs flex justify-between items-center bg-background p-1.5 rounded border">
+                      <span className="font-semibold">{cls}</span>
+                      <span className="text-[10px] text-muted-foreground">Trained</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-[10px] text-center italic text-muted-foreground py-4">No custom signs trained yet.</p>
+                )}
+              </div>
+
+              {predictor.trainedClasses.length > 0 && (
+                <Button variant="ghost" size="sm" className="w-full text-destructive text-xs h-7" onClick={predictor.clearModel}>
+                  <Trash2 className="w-3 h-3 mr-2" /> Clear Model
+                </Button>
+              )}
             </div>
           </Card>
 
-          {/* Camera Settings */}
-          <Card className="p-4 flex flex-col gap-4 flex-grow">
+          <Card className="p-4 flex flex-col gap-4">
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold flex items-center gap-2">
+              <h3 className="font-semibold flex items-center gap-2 text-sm">
                 <Settings2 className="w-4 h-4" /> Camera
               </h3>
-              <Button variant="ghost" size="icon" onClick={resetCamSettings} title="Reset">
+              <Button variant="ghost" size="icon" onClick={resetCamSettings} className="h-6 w-6">
                 <RefreshCcw className="w-3 h-3" />
               </Button>
             </div>
-            <div className="space-y-4">
+            <div className="space-y-3">
               {['brightness', 'contrast', 'saturation'].map((s) => (
                 <div key={s} className="space-y-1">
-                  <div className="flex justify-between text-xs text-muted-foreground uppercase">
+                  <div className="flex justify-between text-[10px] text-muted-foreground uppercase">
                     <span>{s}</span>
                     <span>{camSettings[s as keyof CameraSettings]}%</span>
                   </div>
@@ -1118,129 +1210,9 @@ export default function ASLRecorder() {
           </Card>
         </div>
 
-        {/* Columns 2 & 3: Video Stage & Controls */}
-        <div className="xl:col-span-2 flex flex-col items-center gap-4">
-          <VideoStage
-            videoRef={videoRef}
-            canvasRef={canvasRef}
-            detectedLabel={predictor.detectedLabel}
-            confidence={predictor.confidence}
-            isLocked={predictor.isLocked}
-            settings={camSettings}
-          />
-
-          {/* Status Bar */}
-          <div className="flex gap-6 text-sm bg-muted/50 px-6 py-3 rounded-full border shadow-sm items-center w-full justify-center flex-wrap">
-            <span className="flex items-center gap-2">
-              <ScanFace className="w-4 h-4 text-primary" />
-              {cameraStatus}
-            </span>
-            <span className="text-muted-foreground hidden sm:inline">|</span>
-            <span className="flex items-center gap-2">
-              <Activity className="w-4 h-4 text-blue-500" />
-              Confidence: <span className="font-bold">{predictor.confidence}%</span>
-            </span>
-            <span className="text-muted-foreground hidden sm:inline">|</span>
-            <span className="font-mono text-purple-600 font-bold flex items-center gap-2">
-              {predictor.isLocked ? <Lock className="w-3 h-3" /> : null}
-              {predictor.debugStatus}
-            </span>
-          </div>
-
-          {/* Main Controls */}
-          <div className="w-full flex flex-col gap-4 p-4 border rounded-lg bg-card/50">
-            <div className="flex justify-between items-center">
-              <h3 className="font-semibold text-lg flex items-center gap-2">
-                Audio Settings
-              </h3>
-              <div className="flex gap-2 items-center">
-                <Button
-                  variant="outline"
-                  onClick={tts.toggle}
-                  className={tts.enabled ? "text-green-600 border-green-200" : "text-muted-foreground"}
-                >
-                  {tts.enabled ? <><Volume2 className="w-4 h-4 mr-2" /> Speech On</> : <><VolumeX className="w-4 h-4 mr-2" /> Speech Off</>}
-                </Button>
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Advanced / Data Collection Toggle */}
-            <details className="text-sm text-muted-foreground cursor-pointer">
-              <summary className="hover:text-primary transition-colors font-medium text-base p-1 flex items-center justify-between">
-                Advanced: Data Collection & ML Training
-                <span className={`text-xs px-2 py-1 rounded-full font-semibold ${collector.collecting ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>
-                  {collector.collecting ? 'RECORDING' : 'IDLE'}
-                </span>
-              </summary>
-
-              <div className="mt-4 space-y-3 p-4 border rounded bg-background">
-                <h4 className="text-sm font-semibold text-foreground">1. Record New Data Samples</h4>
-                <div className="flex gap-2 items-center">
-                  <Input
-                    placeholder="Sign Label (e.g., 'Mom')"
-                    className="w-full"
-                    value={inputLabel}
-                    onChange={(e) => setInputLabel(e.target.value)}
-                    disabled={collector.collecting}
-                  />
-                  <Button
-                    variant={collector.collecting ? "destructive" : "secondary"}
-                    onClick={() => collector.collecting ? collector.stopCollecting() : collector.startCollecting(inputLabel)}
-                    disabled={!inputLabel}
-                  >
-                    {collector.collecting ? `Stop Recording` : "Start Recording"}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground italic">
-                  Collecting at max 5 samples per second. Samples collected: <span className="font-bold text-primary">{collector.sampleCount}</span>
-                </p>
-
-                <Separator />
-
-                <h4 className="text-sm font-semibold text-foreground">2. Train & Manage Model</h4>
-                <div className="flex justify-between items-center text-xs">
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onClick={handleTrainModel}
-                    disabled={collector.sampleCount === 0 || collector.collecting}
-                    className="w-full mr-2"
-                  >
-                    <Brain className="w-3 h-3 mr-2" /> Train Model with New Data
-                  </Button>
-                </div>
-
-                <Separator />
-
-                <h4 className="text-sm font-semibold text-foreground">3. Save/Load Full Dataset</h4>
-                <div className="flex justify-between items-center text-xs">
-                  <Button variant="outline" size="sm" onClick={collector.saveDataset} title="Download Full ML Data">
-                    <RefreshCcw className="w-4 h-4 mr-2 rotate-180" /> Save Full Dataset
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => collector.loadDataset(predictor.loadMLModel)} title="Load ML Data">
-                    <RefreshCcw className="w-4 h-4 mr-2" /> Load Dataset
-                  </Button>
-                </div>
-              </div>
-            </details>
-          </div>
-        </div>
-
-        {/* Column 4: Translation ON TOP of Library (Stacked) */}
-        <div className="xl:col-span-1 flex flex-col gap-4 h-[700px] xl:h-[calc(100vh-140px)] sticky top-6">
-
-          {/* 1. Sentence Display (On Top) */}
-          <div className="flex-shrink-0">
-            <SentenceDisplay
-              sentence={sentence}
-              onClear={() => setSentence("")}
-            />
-          </div>
-
-          {/* 2. NEW VOICE TO SIGN PLAYER - NOW BIGGER AND MATCHING DESIGN */}
-          <div className="flex-shrink-0 h-auto min-h-[400px] flex-grow">
+        {/* SECTION 3: Voice & Library */}
+        <div className="lg:col-span-1 flex flex-col gap-4 h-auto lg:h-[calc(100vh-100px)] lg:sticky lg:top-6 lg:order-3">
+          <div className="flex-shrink-0 h-auto min-h-[300px]">
             <VoiceSignPlayer
               transcript={speech.transcript}
               isListening={speech.isListening}
@@ -1248,30 +1220,27 @@ export default function ASLRecorder() {
             />
           </div>
 
-          {/* 3. Searchable Library (Below Translation) */}
-          <Card className="flex flex-col flex-grow overflow-hidden border-primary/20 shadow-lg min-h-[250px]">
-            {/* Search Header */}
+          <Card className="flex flex-col flex-grow overflow-hidden border-primary/20 shadow-lg min-h-[300px]">
             <div className="p-4 border-b bg-muted/30 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-sm uppercase flex items-center gap-2 text-primary">
-                  <List className="w-4 h-4" /> Sign Library
+                  <List className="w-4 h-4" /> Library
                 </h3>
                 <span className="text-[10px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                  {filteredLibrary.length} Items
+                  {filteredLibrary.length}
                 </span>
               </div>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search signs..."
-                  className="pl-9 bg-background/50"
+                  placeholder="Search..."
+                  className="pl-9 bg-background/50 h-8 text-sm"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
             </div>
 
-            {/* Scrollable List */}
             <div className="flex-grow overflow-y-auto p-2 space-y-2 custom-scrollbar bg-muted/5">
               {filteredLibrary.length > 0 ? (
                 filteredLibrary.map(([key, item]) => (
@@ -1282,7 +1251,14 @@ export default function ASLRecorder() {
                         ? 'bg-primary border-primary text-white shadow-lg translate-x-1'
                         : 'bg-card hover:border-primary/40 hover:bg-muted/30'}`}
                   >
-                    <span className="text-2xl">{item.emoji}</span>
+                    <div className="w-12 h-12 flex-shrink-0 bg-white/10 rounded-md p-1 flex items-center justify-center">
+                      <SignImage
+                        url={item.image}
+                        alt={item.title}
+                        emoji={item.emoji}
+                        className="w-full h-full text-2xl"
+                      />
+                    </div>
                     <div className="flex flex-col min-w-0">
                       <span className="font-bold text-sm truncate">{item.title}</span>
                       <span className="text-[10px] line-clamp-1 opacity-70">
@@ -1293,8 +1269,7 @@ export default function ASLRecorder() {
                 ))
               ) : (
                 <div className="flex flex-col items-center justify-center h-full opacity-30 text-center p-6">
-                  <Search className="w-12 h-12 mb-2" />
-                  <p className="text-sm font-bold uppercase">No signs found</p>
+                  <p className="text-sm font-bold uppercase">No matches</p>
                 </div>
               )}
             </div>
@@ -1302,10 +1277,16 @@ export default function ASLRecorder() {
         </div>
       </div>
 
-      {/* FEEDBACK MODAL IMPLEMENTATION */}
+      <div className="pb-32" />
+
       {isFeedbackOpen && (
         <FeedbackModal onClose={() => setIsFeedbackOpen(false)}>
-          <FeedbackSection />
+          <div className="p-6">
+            <h2 className="text-xl font-bold mb-4">Feedback & Guide</h2>
+            <p className="mb-2">1. Hold your hand steady for 2 seconds.</p>
+            <p className="mb-2">2. Keep hand within the camera frame.</p>
+            <p className="mb-4">3. Detection is slowed down for accuracy.</p>
+          </div>
         </FeedbackModal>
       )}
 
@@ -1313,20 +1294,20 @@ export default function ASLRecorder() {
   );
 }
 
-// --- Sub-Components (Unchanged) ---
+// --- Sub-Components ---
 
 function FeedbackModal({ children, onClose }: { children: React.ReactNode, onClose: () => void }) {
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="bg-background rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto transform scale-95 animate-in fade-in zoom-in duration-300"
+        className="bg-background rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {children}
-        <div className="p-4 flex justify-end">
+        <div className="p-4 flex justify-end border-t">
           <Button variant="secondary" onClick={onClose}>Close</Button>
         </div>
       </div>
@@ -1334,25 +1315,26 @@ function FeedbackModal({ children, onClose }: { children: React.ReactNode, onClo
   );
 }
 
-function VideoStage({ videoRef, canvasRef, detectedLabel, confidence, isLocked, settings }: VideoStageProps) {
+function VideoStage({ videoRef, canvasRef, detectedLabel, confidence, isLocked, settings, isScanning }: VideoStageProps) {
   const videoStyle = settings ? {
     filter: `brightness(${settings.brightness}%) contrast(${settings.contrast}%) saturate(${settings.saturation}%)`,
     opacity: detectedLabel ? '0.7' : '1.0'
   } : {};
 
-  const bgColor = "bg-gray-900";
-
   return (
-    <Card className={`w-full aspect-[4/3] max-w-[640px] shadow-lg border rounded-lg overflow-hidden relative ${bgColor} shrink-0 group`}>
+    <Card className="w-full aspect-[4/3] max-w-[640px] shadow-lg border rounded-lg overflow-hidden relative bg-black shrink-0 group">
       <video
         ref={videoRef}
-        className="absolute inset-0 w-full h-full object-cover transition-all duration-200"
+        className="absolute inset-0 w-full h-full object-cover transition-all duration-200 will-change-transform"
         autoPlay
         playsInline
         muted
         style={videoStyle}
       />
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+      <div className="absolute top-2 right-2">
+        {isScanning && <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_red]" />}
+      </div>
       {detectedLabel && (
         <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex flex-col items-center gap-1 animate-in fade-in zoom-in duration-200 pointer-events-none">
           <div className={`px-6 py-2 text-white rounded-full shadow-lg text-xl font-bold whitespace-nowrap flex items-center gap-2 ${isLocked ? "bg-green-600" : "bg-purple-600/90"}`}>
@@ -1374,25 +1356,34 @@ function VideoStage({ videoRef, canvasRef, detectedLabel, confidence, isLocked, 
 function GestureInfoCard({ label }: { label: string }) {
   const info = GESTURE_LIBRARY[label] || {
     emoji: "👋",
-    title: "Start Signing",
-    description: "Hold your hand up to the camera. Use the settings below if needed."
+    title: "Ready",
+    description: "Hold sign for 2 seconds",
+    image: ""
   };
 
   if (label && !GESTURE_LIBRARY[label]) {
     info.title = label;
-    info.description = `The gesture "${label}" is not in the built-in library. Consider adding it via data collection!`;
+    info.description = `Custom gesture detected.`;
     info.emoji = "✨";
+    info.image = "";
   }
 
   return (
-    <Card className="h-full min-h-[300px] p-6 flex flex-col items-center text-center justify-center bg-card transition-all duration-300">
-      <div className="text-[80px] md:text-[100px] mb-4 animate-in zoom-in duration-300 select-none drop-shadow-lg">
-        {info.emoji}
+    <Card className="h-full min-h-[200px] p-6 flex flex-col items-center text-center justify-center bg-card transition-all duration-300">
+      <div className="mb-4 animate-in zoom-in duration-300 select-none drop-shadow-lg">
+        <div className="relative w-32 h-32 md:w-40 md:h-40 flex items-center justify-center">
+          <SignImage
+            url={info.image}
+            alt={info.title}
+            emoji={info.emoji}
+            className="w-full h-full text-[60px] md:text-[80px]"
+          />
+        </div>
       </div>
-      <h2 className="text-2xl font-bold mb-2 text-primary">{info.title}</h2>
-      <div className="flex items-start gap-2 text-left bg-muted/50 p-4 rounded-lg w-full">
-        <Info className="w-5 h-5 shrink-0 mt-0.5 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground leading-relaxed">
+      <h2 className="text-xl md:text-2xl font-bold mb-2 text-primary">{info.title}</h2>
+      <div className="flex items-start gap-2 text-left bg-muted/50 p-3 rounded-lg w-full">
+        <Info className="w-4 h-4 shrink-0 mt-0.5 text-muted-foreground" />
+        <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
           {info.description}
         </p>
       </div>
@@ -1400,35 +1391,37 @@ function GestureInfoCard({ label }: { label: string }) {
   );
 }
 
-function SentenceDisplay({ sentence, onClear }: { sentence: string, onClear: () => void }) {
+function SentenceDisplay({ sentence, onClear, onBackspace }: { sentence: string, onClear: () => void, onBackspace: () => void }) {
   return (
-    <Card className="h-full min-h-[150px] flex flex-col relative overflow-hidden">
-      <div className="p-4 border-b flex justify-between items-center bg-muted/20">
-        <label className="font-semibold flex items-center gap-2">
+    <Card className="h-full min-h-[100px] flex flex-col relative overflow-hidden">
+      <div className="p-3 border-b flex justify-between items-center bg-muted/20">
+        <label className="font-semibold flex items-center gap-2 text-sm">
           <Activity className="w-4 h-4" /> Live Translation
         </label>
-        <Button variant="ghost" size="sm" onClick={onClear} disabled={!sentence} className="h-8">
-          <Trash2 className="w-4 h-4 mr-2" /> Clear
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="ghost" size="sm" onClick={onBackspace} disabled={!sentence} className="h-7 text-xs">
+            <Delete className="w-3 h-3 mr-2" /> Backspace
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onClear} disabled={!sentence} className="h-7 text-xs">
+            <Trash2 className="w-3 h-3 mr-2" /> Clear
+          </Button>
+        </div>
       </div>
-
       <div className="flex-grow p-4 bg-muted/10 overflow-y-auto">
         {sentence ? (
-          <p className="text-xl font-mono leading-relaxed break-words whitespace-pre-wrap">
+          <p className="text-lg md:text-xl font-mono leading-relaxed break-words whitespace-pre-wrap">
             {sentence}
           </p>
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-muted-foreground/50 italic text-center p-4">
-            <ScanFace className="w-8 h-8 mb-2 opacity-20" />
-            <p className="text-xs">Waiting for input...</p>
+          <div className="h-full flex flex-col items-center justify-center text-muted-foreground/50 italic text-center p-2">
+            <p className="text-xs">Waiting for signs...</p>
           </div>
         )}
       </div>
-
       {sentence && (
-        <div className="p-2 bg-green-500/10 border-t flex items-center justify-center gap-2 text-xs text-green-600 font-medium">
-          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-          Listening Active
+        <div className="p-1 bg-green-500/10 border-t flex items-center justify-center gap-2 text-[10px] text-green-600 font-medium">
+          <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+          Active
         </div>
       )}
     </Card>
