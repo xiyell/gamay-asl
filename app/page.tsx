@@ -21,8 +21,8 @@ interface GestureLibraryItem {
   image: string;
 }
 interface VideoStageProps {
-  videoRef: React.RefObject<HTMLVideoElement>;
-  canvasRef: React.RefObject<HTMLCanvasElement>;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
   detectedLabel: string;
   confidence: number;
   isLocked: boolean;
@@ -425,8 +425,8 @@ function useLandmarker({
   canvasRef,
   onFrameProcessed
 }: {
-  videoRef: React.RefObject<HTMLVideoElement>,
-  canvasRef: React.RefObject<HTMLCanvasElement>,
+  videoRef: React.RefObject<HTMLVideoElement | null>,
+  canvasRef: React.RefObject<HTMLCanvasElement | null>,
   onFrameProcessed: (vector: number[], rawData: Landmark[]) => void
 }) {
   const [status, setStatus] = useState("Loading Model...");
