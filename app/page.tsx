@@ -138,7 +138,7 @@ const SignImage = ({ url, alt, emoji, className }: { url?: string, alt: string, 
     <img
       src={url}
       alt={alt}
-      className={`${className} object-contain dark:invert min-w-[50px] min-h-[50px] block w-full h-full`}
+      className={`${className} object-contain min-w-[50px] min-h-[50px] block w-full h-full filter grayscale contrast-125 dark:invert drop-shadow-xl hover:scale-110 transition-transform duration-200`}
       onError={() => setError(true)}
     />
   );
@@ -146,39 +146,39 @@ const SignImage = ({ url, alt, emoji, className }: { url?: string, alt: string, 
 
 // --- GESTURE LIBRARY ---
 const GESTURE_LIBRARY: Record<string, GestureLibraryItem> = {
-  "A": { emoji: "✊", title: "A", description: "Fist, thumb on side.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Sign_language_A.svg/236px-Sign_language_A.svg.png" },
-  "B": { emoji: "✋", title: "B", description: "Flat hand, thumb tucked.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/18/Sign_language_B.svg/203px-Sign_language_B.svg.png" },
-  "C": { emoji: "🫳", title: "C", description: "Hand curved like a cup.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Sign_language_C.svg/270px-Sign_language_C.svg.png" },
-  "D": { emoji: "☝️", title: "D", description: "Index up, others touching.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/06/Sign_language_D.svg/188px-Sign_language_D.svg.png" },
-  "E": { emoji: "👊", title: "E", description: "Fingers curled, thumb low.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Sign_language_E.svg/192px-Sign_language_E.svg.png" },
-  "F": { emoji: "👌", title: "F", description: "Thumb & Index touching.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Sign_language_F.svg/239px-Sign_language_F.svg.png" },
-  "G": { emoji: "👈", title: "G", description: "Pointing sideways.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/Sign_language_G.svg/373px-Sign_language_G.svg.png" },
-  "H": { emoji: "✌️", title: "H", description: "Two fingers sideways.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/Sign_language_H.svg/405px-Sign_language_H.svg.png" },
-  "I": { emoji: "🤙", title: "I", description: "Pinky straight up.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2b/Sign_language_I.svg/178px-Sign_language_I.svg.png" },
-  "J": { emoji: "🤙", title: "J", description: "Pinky swooping (Motion).", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/Sign_language_J.svg/236px-Sign_language_J.svg.png" },
-  "K": { emoji: "🤞", title: "K", description: "Thumb between Index & Middle.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/Sign_language_K.svg/182px-Sign_language_K.svg.png" },
-  "L": { emoji: "👆", title: "L", description: "L shape with thumb/index.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Sign_language_L.svg/213px-Sign_language_L.svg.png" },
-  "M": { emoji: "👊", title: "M", description: "Thumb under 3 fingers.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Sign_language_M.svg/207px-Sign_language_M.svg.png" },
-  "N": { emoji: "👊", title: "N", description: "Thumb under 2 fingers.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e6/Sign_language_N.svg/208px-Sign_language_N.svg.png" },
-  "O": { emoji: "👌", title: "O", description: "Fingers and thumb touch.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Sign_language_O.svg/276px-Sign_language_O.svg.png" },
-  "P": { emoji: "👇", title: "P", description: "Index down, middle down.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/08/Sign_language_P.svg/228px-Sign_language_P.svg.png" },
-  "Q": { emoji: "👇", title: "Q", description: "Index/Thumb down.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/34/Sign_language_Q.svg/228px-Sign_language_Q.svg.png" },
-  "R": { emoji: "🤞", title: "R", description: "Index/Middle crossed.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2e/Sign_language_R.svg/222px-Sign_language_R.svg.png" },
-  "S": { emoji: "✊", title: "S", description: "Fist, thumb OVER fingers.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/58/Sign_language_S.svg/199px-Sign_language_S.svg.png" },
-  "T": { emoji: "✊", title: "T", description: "Thumb under Index.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/13/Sign_language_T.svg/205px-Sign_language_T.svg.png" },
-  "U": { emoji: "✌️", title: "U", description: "Index/Middle together.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/Sign_language_U.svg/202px-Sign_language_U.svg.png" },
-  "V": { emoji: "✌️", title: "V", description: "Index/Middle spread.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Sign_language_V.svg/216px-Sign_language_V.svg.png" },
-  "W": { emoji: "🤟", title: "W", description: "3 Fingers spread.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Sign_language_W.svg/231px-Sign_language_W.svg.png" },
-  "X": { emoji: "☝️", title: "X", description: "Index hooked.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/Sign_language_X.svg/228px-Sign_language_X.svg.png" },
-  "Y": { emoji: "🤙", title: "Y", description: "Thumb & Pinky out.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Sign_language_Y.svg/276px-Sign_language_Y.svg.png" },
-  "Z": { emoji: "☝️", title: "Z", description: "Index draws Z (Motion).", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/Sign_language_Z.svg/228px-Sign_language_Z.svg.png" },
-  "1": { emoji: "☝️", title: "1", description: "Index up.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Sign_language_1.svg/132px-Sign_language_1.svg.png" },
-  "2": { emoji: "✌️", title: "2", description: "Index/Middle up.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/69/Sign_language_2.svg/148px-Sign_language_2.svg.png" },
-  "3": { emoji: "🤟", title: "3", description: "Thumb/Index/Middle.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2a/Sign_language_3.svg/178px-Sign_language_3.svg.png" },
-  "4": { emoji: "🖐", title: "4", description: "4 Fingers, thumb tucked.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e6/Sign_language_4.svg/170px-Sign_language_4.svg.png" },
-  "5": { emoji: "✋", title: "5", description: "All fingers spread.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/Sign_language_5.svg/222px-Sign_language_5.svg.png" },
+  "A": { emoji: "✊", title: "A", description: "Fist, thumb on side.", image: "/gesture/A-removebg-preview.png" },
+  "B": { emoji: "✋", title: "B", description: "Flat hand, thumb tucked.", image: "/gesture/B-removebg-preview.png" },
+  "C": { emoji: "🫳", title: "C", description: "Hand curved like a cup.", image: "/gesture/C-removebg-preview.png" },
+  "D": { emoji: "☝️", title: "D", description: "Index up, others touching.", image: "/gesture/D-removebg-preview.png" },
+  "E": { emoji: "👊", title: "E", description: "Fingers curled, thumb low.", image: "/gesture/E-removebg-preview.png" },
+  "F": { emoji: "👌", title: "F", description: "Thumb & Index touching.", image: "/gesture/F-removebg-preview.png" },
+  "G": { emoji: "👈", title: "G", description: "Pointing sideways.", image: "/gesture/G-removebg-preview.png" },
+  "H": { emoji: "✌️", title: "H", description: "Two fingers sideways.", image: "/gesture/H-removebg-preview.png" },
+  "I": { emoji: "🤙", title: "I", description: "Pinky straight up.", image: "/gesture/I-removebg-preview.png" },
+  "J": { emoji: "🤙", title: "J", description: "Pinky swooping (Motion).", image: "/gesture/J-removebg-preview.png" },
+  "K": { emoji: "🤞", title: "K", description: "Thumb between Index & Middle.", image: "/gesture/K-removebg-preview.png" },
+  "L": { emoji: "👆", title: "L", description: "L shape with thumb/index.", image: "/gesture/L-removebg-preview.png" },
+  "M": { emoji: "👊", title: "M", description: "Thumb under 3 fingers.", image: "/gesture/M-removebg-preview.png" },
+  "N": { emoji: "👊", title: "N", description: "Thumb under 2 fingers.", image: "/gesture/N-removebg-preview.png" },
+  "O": { emoji: "👌", title: "O", description: "Fingers and thumb touch.", image: "/gesture/O-removebg-preview.png" },
+  "P": { emoji: "👇", title: "P", description: "Index down, middle down.", image: "/gesture/P-removebg-preview.png" },
+  "Q": { emoji: "👇", title: "Q", description: "Index/Thumb down.", image: "/gesture/Q-removebg-preview.png" },
+  "R": { emoji: "🤞", title: "R", description: "Index/Middle crossed.", image: "/gesture/R-removebg-preview.png" },
+  "S": { emoji: "✊", title: "S", description: "Fist, thumb OVER fingers.", image: "/gesture/S-removebg-preview.png" },
+  "T": { emoji: "✊", title: "T", description: "Thumb under Index.", image: "/gesture/T-removebg-preview.png" },
+  "U": { emoji: "✌️", title: "U", description: "Index/Middle together.", image: "/gesture/U-removebg-preview.png" },
+  "V": { emoji: "✌️", title: "V", description: "Index/Middle spread.", image: "/gesture/V-removebg-preview.png" },
+  "W": { emoji: "🤟", title: "W", description: "3 Fingers spread.", image: "/gesture/W-removebg-preview.png" },
+  "X": { emoji: "☝️", title: "X", description: "Index hooked.", image: "/gesture/X-removebg-preview.png" },
+  "Y": { emoji: "🤙", title: "Y", description: "Thumb & Pinky out.", image: "/gesture/Y-removebg-preview.png" },
+  "Z": { emoji: "☝️", title: "Z", description: "Index draws Z (Motion).", image: "/gesture/z-removebg-preview.png" },
+  "1": { emoji: "☝️", title: "1", description: "Index up.", image: "/gesture/1-removebg-preview.png" },
+  "2": { emoji: "✌️", title: "2", description: "Index/Middle up.", image: "/gesture/2-removebg-preview.png" },
+  "3": { emoji: "🤟", title: "3", description: "Thumb/Index/Middle.", image: "/gesture/3-removebg-preview.png" },
+  "4": { emoji: "🖐", title: "4", description: "4 Fingers, thumb tucked.", image: "/gesture/4-removebg-preview.png" },
+  "5": { emoji: "✋", title: "5", description: "All fingers spread.", image: "/gesture/5-removebg-preview.png" },
   "I Love You": { emoji: "🤘", title: "ILU", description: "Thumb, Index, Pinky.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Sign_language_I_love_you.svg/228px-Sign_language_I_love_you.svg.png" },
-  "OK": { emoji: "👌", title: "OK", description: "Thumb/Index ring.", image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Sign_language_F.svg/239px-Sign_language_F.svg.png" }
+  "OK": { emoji: "👌", title: "OK", description: "Thumb/Index ring.", image: "/gesture/F-removebg-preview.png" }
 };
 
 // --- Advanced Math Helpers ---
@@ -891,7 +891,7 @@ function VoiceSignPlayer({ transcript, isListening, toggleListen }: { transcript
         {currentSign ? (
           <div className="text-center animate-in zoom-in duration-200 flex flex-col items-center">
             <div className="mb-4 drop-shadow-2xl filter hover:brightness-110 transition-all select-none">
-              <div className="relative w-32 h-32 md:w-48 md:h-48 flex items-center justify-center">
+              <div className="relative w-40 h-40 md:w-64 md:h-64 flex items-center justify-center">
                 <SignImage
                   url={currentSign.image}
                   alt={currentSign.title}
@@ -1371,7 +1371,7 @@ function GestureInfoCard({ label }: { label: string }) {
   return (
     <Card className="h-full min-h-[200px] p-6 flex flex-col items-center text-center justify-center bg-card transition-all duration-300">
       <div className="mb-4 animate-in zoom-in duration-300 select-none drop-shadow-lg">
-        <div className="relative w-32 h-32 md:w-40 md:h-40 flex items-center justify-center">
+        <div className="relative w-40 h-40 md:w-56 md:h-56 flex items-center justify-center">
           <SignImage
             url={info.image}
             alt={info.title}
