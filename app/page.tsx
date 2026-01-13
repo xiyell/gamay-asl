@@ -5,7 +5,7 @@ import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import {
   Moon, Sun, Info, ScanFace, Activity, Lock, RefreshCcw,
   Settings2, Trash2, Volume2, VolumeX, Brain, List, Search,
-  Mic, MicOff, Database, Plus, Save, Cpu, Layers, Delete
+  Mic, MicOff, Database, Plus, Save, Cpu, Layers, Delete, X
 } from "lucide-react";
 
 // --- Types ---
@@ -28,6 +28,8 @@ interface VideoStageProps {
   isLocked: boolean;
   settings: CameraSettings;
   isScanning: boolean;
+  status: string; // Added status prop
+  verificationProgress: number; // New prop for lock-in progress
 }
 
 // --- Inline UI Components ---
@@ -182,11 +184,13 @@ const GESTURE_LIBRARY: Record<string, GestureLibraryItem> = {
 };
 
 // --- Advanced Math Helpers ---
-const dist = (p1: Landmark, p2: Landmark) => {
-  return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+// UPDATED: Now supports scale normalization
+const dist = (p1: Landmark, p2: Landmark, scale = 1.0) => {
+  const d = Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+  return d / scale;
 };
 
-const getFingerState = (landmarks: Landmark[], fingerName: string) => {
+const getFingerState = (landmarks: Landmark[], fingerName: string, scale: number) => {
   const fingerMap: Record<string, number> = {
     "Index": 1, "Middle": 2, "Ring": 3, "Pinky": 4,
   };
@@ -194,30 +198,32 @@ const getFingerState = (landmarks: Landmark[], fingerName: string) => {
   const tip = landmarks[idx * 4 + 4];
   const pip = landmarks[idx * 4 + 2];
   const wrist = landmarks[0];
-  // Strict extension check (Tip must be further from wrist than PIP)
-  return dist(tip, wrist) > dist(pip, wrist) * 1.25;
+  // Extended if Tip is further from wrist than PIP
+  // This logic works regardless of scale, but we pass scale for potential future use or consistency
+  return dist(tip, wrist, scale) > dist(pip, wrist, scale) * 1.2;
 };
 
-const isThumbExtended = (landmarks: Landmark[]) => {
+const isThumbExtended = (landmarks: Landmark[], scale: number) => {
   const thumbTip = landmarks[4];
   const thumbIP = landmarks[3];
   const thumbMCP = landmarks[2];
   const pinkyMCP = landmarks[17];
 
-  // Check 1: Distance from palm (Pinky base)
-  const isFarFromPalm = dist(thumbTip, pinkyMCP) > dist(thumbMCP, pinkyMCP) * 1.4;
-  // Check 2: Straightness of thumb
-  const isStraight = dist(thumbTip, thumbMCP) > dist(thumbIP, thumbMCP) * 1.05;
+  // Normalized checks
+  const isFarFromPalm = dist(thumbTip, pinkyMCP, scale) > dist(thumbMCP, pinkyMCP, scale) * 1.3;
+  const isStraight = dist(thumbTip, thumbMCP, scale) > dist(thumbIP, thumbMCP, scale) * 1.0;
 
   return isFarFromPalm && isStraight;
 };
 
-// --- SMART RECOGNITION LOGIC (REFINED v4) ---
+// --- SMART RECOGNITION LOGIC (REFINED v7 - HIERARCHICAL) ---
 const recognizeGeometricGesture = (landmarks: Landmark[]) => {
   if (!landmarks || landmarks.length === 0) return null;
 
   const wrist = landmarks[0];
   const thumbTip = landmarks[4];
+  const thumbIP = landmarks[3];
+  const thumbMCP = landmarks[2];
   const indexTip = landmarks[8];
   const indexPIP = landmarks[6];
   const indexMCP = landmarks[5];
@@ -228,126 +234,148 @@ const recognizeGeometricGesture = (landmarks: Landmark[]) => {
   const pinkyTip = landmarks[20];
   const pinkyMCP = landmarks[17];
 
-  const indexExt = getFingerState(landmarks, "Index");
-  const middleExt = getFingerState(landmarks, "Middle");
-  const ringExt = getFingerState(landmarks, "Ring");
-  const pinkyExt = getFingerState(landmarks, "Pinky");
-  const thumbExt = isThumbExtended(landmarks);
+  // 1. Calculate Reference Scale (Palm Width: Wrist to Middle MCP)
+  const palmSize = dist(wrist, middleMCP, 1.0);
+  const scale = palmSize > 0.01 ? palmSize : 0.1;
 
-  // 1. "OK" (Priority)
-  // Index and Thumb touching, others extended
-  if (middleExt && ringExt && pinkyExt) {
-    if (dist(thumbTip, indexTip) < 0.05) return "OK";
+  // 2. Get Finger States (Normalized)
+  const indExt = getFingerState(landmarks, "Index", scale);
+  const midExt = getFingerState(landmarks, "Middle", scale);
+  const rinExt = getFingerState(landmarks, "Ring", scale);
+  const pinExt = getFingerState(landmarks, "Pinky", scale);
+  const thumbExt = isThumbExtended(landmarks, scale);
+
+  // Special "Curved" Checks (C, O, X) - these interrupt extension logic
+  const thumbIndexDist = dist(thumbTip, indexTip, scale);
+  const indexCurledHalfway = !indExt && dist(indexTip, indexMCP, scale) > 0.9;
+  
+  // "C" / "O" Check (Prioritize if fingers are ALL curved matching "C" shape)
+  if (!indExt && !midExt && !rinExt && !pinExt) {
+     if (indexCurledHalfway) {
+        if (thumbIndexDist < 0.35) return "O";
+        if (thumbIndexDist > 0.35 && thumbIndexDist < 1.3) return "C";
+     }
   }
 
-  // 2. "C" vs "O" (Curved Hand)
-  // Fingers are NOT fully extended, but not fully closed
-  if (!middleExt && !ringExt && !pinkyExt) {
-    const thumbIndexDist = dist(thumbTip, indexTip);
-    const handOpenness = dist(indexTip, wrist);
+  // Count Extended Fingers (Excluding Thumb)
+  const extendedCount = [indExt, midExt, rinExt, pinExt].filter(Boolean).length;
 
-    // Check if fingers are curved (Tip roughly same distance to wrist as MCP)
-    const isCurved = dist(indexTip, wrist) < dist(indexMCP, wrist) * 1.5;
+  // --- HIERARCHY START ---
+  
+  // CASE: 4 Fingers Up
+  if (extendedCount === 4) {
+    if (dist(thumbTip, indexMCP, scale) < 0.6) return "4"; // Thumb tucked
+    return "5"; // Thumb out = 5 (or loose 4)
+  }
 
-    if (isCurved) {
-      if (thumbIndexDist < 0.05) return "O"; // Closed loop
-      if (thumbIndexDist > 0.05 && thumbIndexDist < 0.18) return "C"; // Open C
+  // CASE: 3 Fingers Up
+  if (extendedCount === 3) {
+    // W: Index, Middle, Ring
+    if (indExt && midExt && rinExt) {
+       // F: If Thumb & Index are touching? No, F is 3 fingers (Mid/Ring/Pinky)
+       return "W";
+    }
+    // F: Middle, Ring, Pinky (Index & Thumb tip touching)
+    if (midExt && rinExt && pinExt) {
+       if (thumbIndexDist < 0.4) return "F";
+       // If not touching, it's just "OK" symbol (which is F in some contexts)
+       return "OK"; // or F
+    }
+  }
+  
+  // CASE: 2 Fingers Up
+  if (extendedCount === 2) {
+    // 3 Check (Thumb + Index + Middle)
+    if (thumbExt && indExt && midExt) return "3";
+
+    // Standard 2-finger group (Index + Middle)
+    if (indExt && midExt) {
+      // K: Thumb inserted UP between Index/Middle
+      if (thumbTip.y < indexMCP.y && dist(thumbTip, indexPIP, scale) < 0.6 && !thumbExt) return "K";
+
+      // R: Crossed
+      const isRightHand = indexMCP.x < pinkyMCP.x;
+      const isCrossed = isRightHand 
+        ? indexTip.x > middleTip.x 
+        : indexTip.x < middleTip.x;
+      if (isCrossed) return "R";
+
+      // U: Touching parallel
+      if (dist(indexTip, middleTip, scale) < 0.35) return "U";
+
+      // V: Spread
+      return "V"; // or 2
+    }
+    
+    // Y Check (Thumb + Pinky) - Wait, Y usually has Index/Mid/Ring down.
+    // If Logic sees "Thumb Up" and "Pinky Up" => That's 1 finger extended (Pinky) + Thumb.
+    // So Y falls into count=1 bucket usually.
+  }
+
+  // CASE: 1 Finger Up
+  if (extendedCount === 1) {
+    // L: Index + Thumb (L shape)
+    if (indExt && thumbExt) return "L";
+    
+    // 1 / D / X
+    if (indExt) {
+      if (dist(thumbTip, middleTip, scale) < 0.5) return "D"; // Thumb touches Middle tip
+      
+      // X: Index is partially curled/hooked? 
+      // Current logical 'indExt' is strict. If X is hooked, indExt might be FALSE.
+      // So X is often detected in count=0 bucket or need looser check.
+      return "1";
+    }
+
+    // I / J / Y (Pinky up)
+    if (pinExt) {
+       if (thumbExt) return "Y";
+       // J is motion, static is I
+       return "I";
     }
   }
 
-  // 3. One Finger Up Group (1, D, L, Z)
-  if (indexExt && !middleExt && !ringExt && !pinkyExt) {
-    if (thumbExt) return "L";
+  // CASE: 0 Fingers Extended (Fist / Hook / Closed)
+  if (extendedCount === 0) {
+     
+     // X Check: Index is "Hooked" (not clearly extended, but not closed)
+     // Tip is far from palm, but PIP is high.
+     if (dist(indexTip, indexMCP, scale) > 0.7 && dist(indexTip, indexMCP, scale) < 1.3) {
+        // Only valid if others are closed
+        return "X";
+     }
 
-    // D: Thumb touches Middle/Ring tip
-    if (dist(thumbTip, middleTip) < 0.06 || dist(thumbTip, ringTip) < 0.06) return "D";
+     // FIST GROUP (Thumb Position Matters)
+     const isRightHand = indexMCP.x < pinkyMCP.x;
 
-    // Z: Handled by motion, but static Z is basically a 1
-    return "1";
-  }
+     // S: Thumb crosses fingers horizontally
+     // Check if thumb tip crosses Middle Finger centerline
+     const thumbCrossed = isRightHand ? (thumbTip.x > middleMCP.x) : (thumbTip.x < middleMCP.x);
+     if (thumbCrossed && thumbTip.y < indexMCP.y) return "S";
 
-  // 4. Two Fingers Up Group (2, V, R, U, K)
-  if (indexExt && middleExt && !ringExt && !pinkyExt) {
+     // T: Thumb sandwich (Between Index & Middle)
+     // Strict X-bound check
+     const thumbInIndexZone = isRightHand 
+         ? (thumbTip.x < indexMCP.x && thumbTip.x > middleMCP.x)
+         : (thumbTip.x > indexMCP.x && thumbTip.x < middleMCP.x);
+     if (thumbInIndexZone && dist(thumbTip, indexPIP, scale) < 0.6) return "T";
 
-    // K Check: Thumb pushed UP between index and middle
-    if (thumbTip.y < indexMCP.y && dist(thumbTip, indexPIP) < 0.08) {
-      return "K";
-    }
+     // E: Thumb curled low, touching/near palm
+     // AND fingers strictly curled tightly
+     const fingerstight = dist(indexTip, indexMCP, scale) < 0.85;
+     if (thumbTip.y > indexMCP.y && dist(thumbTip, indexMCP, scale) < 0.7 && fingerstight) return "E";
+     
+     // M/N variants (Thumb peeking out)
+     // M: Past Ring finger
+     const thumbPastRing = isRightHand ? (thumbTip.x > ringMCP.x) : (thumbTip.x < ringMCP.x);
+     if (thumbPastRing) return "M";
 
-    // R Check: Fingers Crossed
-    // Logic: Compare X distance. If Index X > Middle X (for right hand), they are crossed.
-    // We use absolute difference logic to account for handedness implicitly via relative positions
-    const tipDiffX = indexTip.x - middleTip.x;
-    const mcpDiffX = indexMCP.x - middleMCP.x;
+     // N: Past Middle finger
+     const thumbPastMid = isRightHand ? (thumbTip.x > middleMCP.x) : (thumbTip.x < middleMCP.x);
+     if (thumbPastMid) return "N";
 
-    // If the sign flips between knuckles and tips, they are crossed
-    if (Math.sign(tipDiffX) !== Math.sign(mcpDiffX) && Math.abs(tipDiffX) > 0.015) {
-      return "R";
-    }
-
-    // U Check: Fingers parallel and touching
-    if (dist(indexTip, middleTip) < 0.045) return "U";
-
-    // V / 2 Check: Fingers spread
-    // 3 Check override: If thumb is OUT, it implies 3
-    if (thumbExt) return "3";
-
-    return "2";
-  }
-
-  // 5. Three Fingers Up Group (W, 3)
-  if (indexExt && middleExt && ringExt && !pinkyExt) {
-    return "W"; // Standard W
-  }
-
-  // 3: Thumb, Index, Middle (Thumb must be clearly out)
-  if (thumbExt && indexExt && middleExt && !ringExt && !pinkyExt) {
-    return "3";
-  }
-
-  // 6. Pinky Only (I, J, Y)
-  if (!indexExt && !middleExt && !ringExt && pinkyExt) {
-    if (thumbExt) return "Y"; // Phone gesture
-    return "I"; // Static I. (J is handled by motion)
-  }
-
-  // 7. I Love You (Thumb, Index, Pinky)
-  if (thumbExt && indexExt && !middleExt && !ringExt && pinkyExt) {
-    return "I Love You";
-  }
-
-  // 8. Four/Five Fingers (4, 5)
-  if (indexExt && middleExt && ringExt && pinkyExt) {
-    // 4: Thumb tucked inside palm (Tip close to Index MCP)
-    if (!thumbExt || dist(thumbTip, indexMCP) < 0.08) return "4";
-    return "5";
-  }
-
-  // 9. The Fist Group (A, E, S, T, M, N)
-  // All fingers curled
-  if (!indexExt && !middleExt && !ringExt && !pinkyExt) {
-
-    // E: Thumb curled, tips touching palm
-    // Thumb tip is vertically similar to Index MCP, but pulled in
-    if (thumbTip.y > indexMCP.y && dist(thumbTip, indexMCP) < 0.1) return "E";
-
-    // S: Thumb WRAPPED over fingers (Crosses Middle Finger MCP)
-    if (Math.abs(thumbTip.x - middleMCP.x) < 0.05 && thumbTip.y < indexMCP.y) return "S";
-
-    // T: Thumb tucked UNDER Index finger (Between Index/Middle)
-    // Thumb tip is close to Index MCP/PIP
-    if (dist(thumbTip, indexMCP) < 0.06) return "T";
-
-    // M: Thumb under 3 fingers (Tip past Ring Finger)
-    // Compare X coordinates
-    if ((thumbTip.x > ringMCP.x && wrist.x < ringMCP.x) || (thumbTip.x < ringMCP.x && wrist.x > ringMCP.x)) return "M";
-
-    // N: Thumb under 2 fingers (Tip past Middle Finger)
-    if ((thumbTip.x > middleMCP.x && wrist.x < middleMCP.x) || (thumbTip.x < middleMCP.x && wrist.x > middleMCP.x)) return "N";
-
-    // A: Thumb on the side, vertical
-    // Default fist state
-    return "A";
+     // A: Thumb upright on side
+     return "A";
   }
 
   return null;
@@ -436,7 +464,7 @@ function useLandmarker({
   const onFrameProcessedRef = useRef(onFrameProcessed);
 
   const lastPredictionTime = useRef(0);
-  const PREDICTION_INTERVAL = 50;
+  const predictionIntervalRef = useRef(50); // Dynamic interval
 
   useEffect(() => {
     onFrameProcessedRef.current = onFrameProcessed;
@@ -463,12 +491,13 @@ function useLandmarker({
       canvas.height = video.videoHeight;
     }
     const now = Date.now();
-    if (now - lastPredictionTime.current < PREDICTION_INTERVAL) {
+    if (now - lastPredictionTime.current < predictionIntervalRef.current) {
       requestRef.current = requestAnimationFrame(predictWebcam);
       return;
     }
     lastPredictionTime.current = now;
     setIsScanning(true);
+    
     const startTimeMs = performance.now();
     try {
       if (landmarkerRef.current) {
@@ -486,40 +515,76 @@ function useLandmarker({
     } catch (e) {
       console.warn(e);
     }
-    setTimeout(() => setIsScanning(false), 50);
+    
+    // Dynamic Throttling: Adjust FPS based on device performance
+    const endTimeMs = performance.now();
+    const duration = endTimeMs - startTimeMs;
+    if (duration > 40) {
+       // Too slow? Slow down the loop to prevent freezing
+       predictionIntervalRef.current = Math.min(200, duration + 30);
+    } else if (duration < 20) {
+       // Fast? Speed up (cap at 30fps ~33ms)
+       predictionIntervalRef.current = Math.max(33, predictionIntervalRef.current - 5);
+    }
+
+    setTimeout(() => setIsScanning(false), predictionIntervalRef.current);
     requestRef.current = requestAnimationFrame(predictWebcam);
   }, [videoRef, canvasRef]);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
     let isCancelled = false;
+
     const initLandmarker = async () => {
       if (typeof window === 'undefined' || !navigator.mediaDevices) return;
       try {
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
         );
-        landmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
-            delegate: "GPU"
-          },
-          runningMode: "VIDEO",
-          numHands: 1,
-          minHandDetectionConfidence: 0.5,
-          minHandPresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5
-        });
-        if (!isCancelled) setStatus("Starting Camera...");
-        startCamera();
+        
+        try {
+          landmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+              delegate: "GPU"
+            },
+            runningMode: "VIDEO",
+            numHands: 1,
+            minHandDetectionConfidence: 0.5,
+            minHandPresenceConfidence: 0.5,
+            minTrackingConfidence: 0.5
+          });
+          console.log("Gamay: Model loaded using GPU");
+        } catch (gpuError) {
+          console.warn("Gamay: GPU init failed, falling back to CPU", gpuError);
+          landmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+              delegate: "CPU"
+            },
+            runningMode: "VIDEO",
+            numHands: 1,
+            minHandDetectionConfidence: 0.5,
+            minHandPresenceConfidence: 0.5,
+            minTrackingConfidence: 0.5
+          });
+          console.log("Gamay: Model loaded using CPU");
+        }
+
+        // Model loaded.
+        if (!isCancelled && videoRef.current && videoRef.current.srcObject) {
+           setStatus("Ready");
+        }
       } catch (error) {
-        console.error(error);
+        console.error("Gamay Critical AI Load Error:", error);
         if (!isCancelled) setStatus("Failed to load AI.");
       }
     };
+
     const startCamera = async () => {
       if (videoRef.current && navigator.mediaDevices) {
         try {
+          if (!isCancelled) setStatus("Starting Camera..."); 
           stream = await navigator.mediaDevices.getUserMedia({
             video: { width: 640, height: 480, facingMode: "user" }
           });
@@ -527,7 +592,13 @@ function useLandmarker({
             videoRef.current.srcObject = stream;
             videoRef.current.onloadeddata = () => {
               predictWebcam();
-              if (!isCancelled) setStatus("Ready");
+              if (!isCancelled) {
+                 if (landmarkerRef.current) {
+                    setStatus("Ready");
+                 } else {
+                    setStatus("Downloading Model...");
+                 }
+              }
             };
           }
         } catch (err) {
@@ -536,7 +607,11 @@ function useLandmarker({
         }
       }
     };
+
+    // Run parallel for faster startup
+    startCamera();
     initLandmarker();
+
     return () => {
       isCancelled = true;
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
@@ -564,9 +639,11 @@ function usePredictionModel() {
   const prevIndexPos = useRef<{ x: number, y: number } | null>(null);
   const motionBuffer = useRef<number[]>([]);
 
-  // Increased buffer size for consistency (was 5, now 10)
-  const PREDICTION_BUFFER_SIZE = 10;
-  const SCAN_DELAY_MS = 800;
+  const [verificationProgress, setVerificationProgress] = useState(0);
+
+  // Increased buffer size for consistency (User requested 20-30 frames)
+  const PREDICTION_BUFFER_SIZE = 30;
+  const SCAN_DELAY_MS = 600; // slightly faster lock
 
   const loadMLModel = (data: TrainingSample[]) => {
     trainingDataRef.current = data;
@@ -587,24 +664,29 @@ function usePredictionModel() {
       setDebugStatus("No Hand");
       setConfidence(0);
       setIsLocked(false);
-      bufferRef.current = [];
+      bufferRef.current = []; // Clear buffer on loss
       setDetectedLabel("");
       return null;
     }
 
     if (Date.now() - lastSuccessfulDetectionTime.current < SCAN_DELAY_MS) {
       setIsLocked(true);
-      return detectedLabel;
+      return detectedLabel; // Keep holding the last result
     }
     setIsLocked(false);
 
-    let result: string | null = null;
+    let rawResult: string | null = null;
+    let rawConfidence = 0;
 
+    // --- 1. RAW PREDICTION PHASE ---
     if (modelType === "geometric") {
-      result = recognizeGeometricGesture(rawLandmarks);
+      rawResult = recognizeGeometricGesture(rawLandmarks);
+      
+      // Geometric confidence is implicitly 100% if matched, but we simulate variance
+      if (rawResult) rawConfidence = 90;
 
       // Z Motion Logic
-      if (result === "1" || result === "D") {
+      if (rawResult === "1" || rawResult === "D") {
         const indexTip = rawLandmarks[8];
         if (prevIndexPos.current) {
           const dx = Math.abs(indexTip.x - prevIndexPos.current.x);
@@ -613,8 +695,11 @@ function usePredictionModel() {
           motionBuffer.current.push(velocity);
           if (motionBuffer.current.length > 5) motionBuffer.current.shift();
           const avgVel = motionBuffer.current.reduce((a, b) => a + b, 0) / motionBuffer.current.length;
-          // Increased threshold to prevent detecting Z on shaky hands
-          if (avgVel > 0.04) result = "Z";
+          
+          if (avgVel > 0.04) {
+             rawResult = "Z";
+             rawConfidence = 95; // Motion adds confidence
+          }
         }
         prevIndexPos.current = { x: indexTip.x, y: indexTip.y };
       } else {
@@ -627,42 +712,62 @@ function usePredictionModel() {
           p.x - wrist.x, p.y - wrist.y, p.z - wrist.z
         ]);
         const mlPrediction = predictKNN(normalizedInput, trainingDataRef.current);
-        if (mlPrediction) result = mlPrediction.label;
-      } else {
-        setDebugStatus(`Need ${K}+ samples`);
-        return null;
+        if (mlPrediction) {
+           rawResult = mlPrediction.label;
+           rawConfidence = mlPrediction.confidence;
+        }
       }
     }
 
-    setDebugStatus(result ? `Found: ${result}` : "Unknown");
+    setDebugStatus(rawResult ? `Found: ${rawResult} (${Math.round(rawConfidence)}%)` : "Analysing...");
 
-    if (!result) {
-      setConfidence(0);
+    // --- 2. STABILIZATION PHASE (The Filter) ---
+    // We only accept the result if it's high quality
+    if (!rawResult) {
+      // If we see nothing, slowly decay confidence but don't snap to empty immediately
+      if (bufferRef.current.length > 0) bufferRef.current.shift();
       return null;
     }
 
-    bufferRef.current.push(result);
+    // Add to sliding window buffer
+    bufferRef.current.push(rawResult);
     if (bufferRef.current.length > PREDICTION_BUFFER_SIZE) {
       bufferRef.current.shift();
     }
 
+    // Must have enough data to decide
+    if (bufferRef.current.length < 5) return null;
+
+    // Count occurrences in buffer
     const counts: Record<string, number> = {};
     bufferRef.current.forEach((g) => { counts[g] = (counts[g] || 0) + 1; });
-    const winner = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, "");
-    const winCount = counts[winner];
-    const calcConfidence = Math.round((winCount / bufferRef.current.length) * 100);
+    
+    const bestCandidate = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, "");
+    const frequency = counts[bestCandidate];
+    const consistency = frequency / bufferRef.current.length; // 0.0 to 1.0
 
-    setConfidence(calcConfidence);
+    // HYBRID CONFIDENCE CALCULATION
+    // Combine raw algorithm confidence with temporal stability
+    const finalConfidence = Math.round((rawConfidence * 0.4) + (consistency * 100 * 0.6));
+    setConfidence(finalConfidence); // Update UI
 
-    // Consistency Check: Require >70% of buffer to match
-    if (winCount > PREDICTION_BUFFER_SIZE * 0.7) {
-      if (winner !== detectedLabel) {
+    // CALC PROGRESS
+    // How close are we to the required 30 frames of consistency?
+    // We map frequency (count of best candidate) to a 0-100 scale based on a threshold (e.g. 25 frames)
+    const REQUIRED_FRAMES = 25;
+    const progress = Math.min(100, Math.round((frequency / REQUIRED_FRAMES) * 100));
+    setVerificationProgress(progress);
+
+    // STRICT THRESHOLD: 
+    // Requires high consistency (frequency > REQUIRED) AND >75% overall confidence
+    if (frequency >= REQUIRED_FRAMES && finalConfidence > 75) {
+      if (bestCandidate !== detectedLabel) {
         lastSuccessfulDetectionTime.current = Date.now();
       }
-      return winner;
+      return bestCandidate;
     }
 
-    return null;
+    return null; // Suppress unstable predictions
   };
 
   return {
@@ -678,7 +783,8 @@ function usePredictionModel() {
     mlDataSize,
     loadMLModel,
     clearModel,
-    trainedClasses
+    trainedClasses,
+    verificationProgress
   };
 }
 
@@ -931,6 +1037,62 @@ function VoiceSignPlayer({ transcript, isListening, toggleListen }: { transcript
 
 // --- Main Component ---
 
+// --- AUTO CORRECT DICTIONARY ---
+
+const COMMON_WORDS = [
+  "THE", "OF", "AND", "A", "TO", "IN", "IS", "YOU", "THAT", "IT", "HE", "WAS", "FOR", "ON", "ARE", "AS", "WITH", "HIS", "THEY", "I", "AT", "BE", "THIS", "HAVE", "FROM", "OR", "ONE", "HAD", "BY", "WORD", "BUT", "NOT", "WHAT", "ALL", "WERE", "WE", "WHEN", "YOUR", "CAN", "SAID", "THERE", "USE", "AN", "EACH", "WHICH", "SHE", "DO", "HOW", "THEIR", "IF", "WILL", "UP", "OTHER", "ABOUT", "OUT", "MANY", "THEN", "THEM", "THESE", "SO", "SOME", "HER", "WOULD", "MAKE", "LIKE", "HIM", "INTO", "TIME", "HAS", "LOOK", "TWO", "MORE", "WRITE", "GO", "SEE", "NUMBER", "NO", "WAY", "COULD", "PEOPLE", "MY", "THAN", "FIRST", "WATER", "BEEN", "CALL", "WHO", "OIL", "ITS", "NOW", "FIND", "LONG", "DOWN", "DAY", "DID", "GET", "COME", "MADE", "MAY", "PART",
+  "HELLO", "WORLD", "GOOD", "MORNING", "AFTERNOON", "EVENING", "PLEASE", "THANK", "SORRY", "YES", "HELP", "LOVE", "HAPPY", "HOME", "WORK", "SCHOOL", "FAMILY", "FRIEND", "NAME", "NICE", "MEET", "LATER", "SEE", "TOMORROW", "TODAY", "YESTERDAY", "WEEK", "MONTH", "YEAR", "WHERE", "WHY", "BECAUSE", "WANT", "NEED", "FEEL", "BETTER", "BEST", "MUCH", "SOME", "ANY", "EVERY", "RIGHT", "LEFT", "STOP", "START", "FINISH"
+].sort();
+
+// --- AMBIGUITY / CONFUSION SETS ---
+const CONFUSION_SETS: Record<string, string[]> = {
+  "M": ["N", "T", "S", "A"],
+  "N": ["M", "T", "S"],
+  "T": ["M", "N", "S"],
+  "S": ["A", "E", "M", "N"],
+  "A": ["S", "E", "T"],
+  "E": ["S", "A"],
+  "K": ["V", "U", "2"],
+  "V": ["K", "U", "R"],
+  "U": ["K", "V", "R"],
+  "R": ["U", "V"],
+  "2": ["V", "K"],
+  "5": ["4"],
+  "4": ["5"]
+};
+
+// --- useAutocomplete Hook ---
+function useAutocomplete(sentence: string) {
+  const [predictions, setPredictions] = useState<string[]>([]);
+  const [lastPart, setLastPart] = useState("");
+
+  useEffect(() => {
+    // 1. Extract the trailing sequence of single letters (spaced)
+    // E.g. "H E L L" -> "HELL"
+    // Regex looks for: (Space + SingleChar)+ at the end
+    const lastLettersMatch = sentence.match(/(?:^| )([A-Z0-9](?: [A-Z0-9])*)$/);
+
+    if (lastLettersMatch) {
+      const rawSequence = lastLettersMatch[1];
+      const joinedWord = rawSequence.replace(/ /g, "");
+
+      if (joinedWord.length >= 2) {
+        setLastPart(rawSequence); // Keep the spaced version to know what to replace
+        const matches = COMMON_WORDS.filter(w => w.startsWith(joinedWord)).slice(0, 5);
+        setPredictions(matches);
+      } else {
+        setPredictions([]);
+        setLastPart("");
+      }
+    } else {
+      setPredictions([]);
+      setLastPart("");
+    }
+  }, [sentence]);
+
+  return { predictions, lastPart };
+}
+
 export default function ASLRecorder() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -944,10 +1106,25 @@ export default function ASLRecorder() {
   const [sentence, setSentence] = useState("");
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [alternates, setAlternates] = useState<string[]>([]); // New state for correction options
 
   const [camSettings, setCamSettings] = useState<CameraSettings>({
     brightness: 100, contrast: 100, saturation: 100
   });
+
+  const { predictions, lastPart } = useAutocomplete(sentence);
+
+  const handleSelectPrediction = (word: string) => {
+    setSentence(prev => {
+      // Remove the lastPart (e.g. "H E L L") from the end
+      if (prev.endsWith(lastPart)) {
+        const base = prev.slice(0, prev.length - lastPart.length);
+        // Append full word
+        return base + word + " ";
+      }
+      return prev;
+    });
+  };
 
   const filteredLibrary = useMemo(() => {
     const entries = Object.entries(GESTURE_LIBRARY);
@@ -962,7 +1139,22 @@ export default function ASLRecorder() {
   const resetCamSettings = () => setCamSettings({ brightness: 100, contrast: 100, saturation: 100 });
 
   const lastAddedTimeRef = useRef<number>(0);
-  const SENTENCE_ADD_COOLDOWN = 1000;
+  const alternatesTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Track timeout to prevent premature clearing
+  const SENTENCE_ADD_COOLDOWN = 1200; // Increased cooldown to prevent accidental double-adds
+
+  const handleSelectAlternate = (alt: string) => {
+    setSentence(prev => {
+        const parts = prev.trim().split(" ");
+        const last = parts[parts.length - 1];
+        // If last word is single char, replace it. If it's a word, ignore (safety)
+        if (last && last.length === 1) {
+             return parts.slice(0, -1).join(" ") + " " + alt + " ";
+        }
+        return prev;
+    });
+    setAlternates([]); // Clear after selection
+    if (alternatesTimeoutRef.current) clearTimeout(alternatesTimeoutRef.current);
+  };
 
   // --- NEW: BACKSPACE FUNCTION ---
   const handleBackspace = () => {
@@ -981,13 +1173,29 @@ export default function ASLRecorder() {
         predictor.setDetectedLabel(result);
         tts.speak(result);
       }
-      if (result && predictor.confidence > 80 && !predictor.isLocked) {
+      if (result && predictor.confidence > 75 && !predictor.isLocked) {
         const now = Date.now();
         if (now - lastAddedTimeRef.current > SENTENCE_ADD_COOLDOWN) {
           const sentenceParts = sentence.trim().split(/\s+/);
           const lastWord = sentenceParts[sentenceParts.length - 1];
-          setSentence(prev => lastWord === result ? prev : `${prev.trim()} ${result}`);
-          lastAddedTimeRef.current = now;
+          // Prevent adding duplicates if user holds sign too long
+          if (lastWord !== result) {
+             setSentence(prev => `${prev.trim()} ${result}`);
+             
+             // Clear previous timeout if exists
+             if (alternatesTimeoutRef.current) clearTimeout(alternatesTimeoutRef.current);
+
+             // Check for alternates
+             if (CONFUSION_SETS[result]) {
+                 setAlternates(CONFUSION_SETS[result]);
+                 // Auto-hide alternates after 8 seconds (User requested >5s)
+                 alternatesTimeoutRef.current = setTimeout(() => setAlternates([]), 8000);
+             } else {
+                 setAlternates([]);
+             }
+             
+             lastAddedTimeRef.current = now;
+          }
         }
       }
     }
@@ -1038,6 +1246,8 @@ export default function ASLRecorder() {
             isLocked={predictor.isLocked}
             settings={camSettings}
             isScanning={isScanning}
+            status={cameraStatus}
+            verificationProgress={predictor.verificationProgress}
           />
 
           <div className="flex gap-2 md:gap-6 text-xs md:text-sm bg-muted/50 px-4 py-2 rounded-full border shadow-sm items-center w-full justify-between md:justify-center flex-wrap">
@@ -1051,12 +1261,51 @@ export default function ASLRecorder() {
             </span>
           </div>
 
-          <div className="w-full">
+          <div className="w-full relative">
             <SentenceDisplay
               sentence={sentence}
               onClear={() => setSentence("")}
               onBackspace={handleBackspace} // Passed here
             />
+            {/* PREDICTION POPUP */}
+            {predictions.length > 0 && (
+               <div className="absolute bottom-full left-0 mb-2 bg-popover text-popover-foreground flex flex-col rounded-lg border shadow-xl animate-in slide-in-from-bottom-2 overflow-hidden z-20 min-w-[150px]">
+                 <div className="bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase text-primary border-b">
+                   Suggestions
+                 </div>
+                 {predictions.map((p, i) => (
+                   <button
+                     key={p}
+                     onClick={() => handleSelectPrediction(p)}
+                     className={`text-left px-3 py-2 text-sm hover:bg-muted font-medium flex justify-between items-center group transition-colors ${i === 0 ? 'bg-muted/30' : ''}`}
+                   >
+                     {p}
+                     <span className="text-[10px] opacity-0 group-hover:opacity-100 text-muted-foreground transition-opacity">Tap</span>
+                   </button>
+                 ))}
+               </div>
+            )}
+            
+            {/* CORRECTION / ALTERNATES POPUP */}
+            {alternates.length > 0 && predictions.length === 0 && (
+                <div className="absolute bottom-full right-0 mb-2 bg-popover text-popover-foreground flex flex-col rounded-lg border shadow-xl animate-in slide-in-from-bottom-2 overflow-hidden z-20 min-w-[200px]">
+                     <div className="bg-orange-500/10 px-3 py-1 text-[10px] font-bold uppercase text-orange-600 border-b flex justify-between items-center">
+                       <span>Is that wrong?</span>
+                       <button onClick={() => setAlternates([])} className="hover:text-foreground"><X className="w-3 h-3"/></button>
+                     </div>
+                     <div className="flex flex-wrap gap-1 p-2">
+                         {alternates.map(alt => (
+                             <button
+                               key={alt}
+                               onClick={() => handleSelectAlternate(alt)}
+                               className="flex-1 min-w-[40px] h-10 bg-muted hover:bg-primary hover:text-primary-foreground rounded-md text-sm font-bold transition-colors border"
+                             >
+                               {alt}
+                             </button>
+                         ))}
+                     </div>
+                </div>
+            )}
           </div>
 
           <div className="w-full flex flex-col gap-4 p-4 border rounded-lg bg-card/50">
@@ -1286,6 +1535,8 @@ export default function ASLRecorder() {
             <p className="mb-2">1. Hold your hand steady for 2 seconds.</p>
             <p className="mb-2">2. Keep hand within the camera frame.</p>
             <p className="mb-4">3. Detection is slowed down for accuracy.</p>
+            <h3 className="font-bold mt-4 mb-2">Auto-Correct</h3>
+            <p className="mb-2">Spell a word (e.g., H E L L) and tap a suggestion to complete it.</p>
           </div>
         </FeedbackModal>
       )}
@@ -1315,14 +1566,56 @@ function FeedbackModal({ children, onClose }: { children: React.ReactNode, onClo
   );
 }
 
-function VideoStage({ videoRef, canvasRef, detectedLabel, confidence, isLocked, settings, isScanning }: VideoStageProps) {
+function VideoStage({ videoRef, canvasRef, detectedLabel, confidence, isLocked, settings, isScanning, status, verificationProgress }: VideoStageProps) {
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (status === "Starting Camera...") {
+      setProgress(10);
+    } else if (status === "Downloading Model...") {
+      setProgress(25);
+      // Simulate progress up to 90% while waiting
+      interval = setInterval(() => {
+        setProgress(prev => {
+          if (prev >= 90) return prev;
+          // random increment for natural feel
+          return prev + Math.floor(Math.random() * 10) + 1;
+        });
+      }, 800);
+    } else if (status === "Ready") {
+      setProgress(100);
+    }
+    return () => clearInterval(interval);
+  }, [status]);
+
   const videoStyle = settings ? {
     filter: `brightness(${settings.brightness}%) contrast(${settings.contrast}%) saturate(${settings.saturation}%)`,
-    opacity: detectedLabel ? '0.7' : '1.0'
+    opacity: detectedLabel ? '0.7' : '1.0',
+    display: status === "Ready" ? 'block' : 'none', // Hide video element if not ready
+    transform: 'scaleX(-1)' // MIRROR THE VIDEO for natural user experience
   } : {};
 
   return (
-    <Card className="w-full aspect-[4/3] max-w-[640px] shadow-lg border rounded-lg overflow-hidden relative bg-black shrink-0 group">
+    <Card className="w-full aspect-[4/3] max-w-[640px] shadow-lg border rounded-lg overflow-hidden relative bg-black shrink-0 group flex items-center justify-center">
+      {status !== "Ready" && (
+         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-muted/10 backdrop-blur-md text-foreground p-6">
+            <div className="mb-4 relative">
+               <div className="w-12 h-12 border-4 border-muted rounded-full" />
+               <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin absolute top-0 left-0" />
+            </div>
+            <p className="font-bold text-lg mb-2 animate-pulse">{status}</p>
+            
+            {/* PROGRESS BAR */}
+            <div className="w-64 h-2 bg-secondary/50 rounded-full overflow-hidden border border-white/10">
+               <div 
+                 className="h-full bg-primary transition-all duration-700 ease-out" 
+                 style={{ width: `${progress}%` }} 
+               />
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">{progress}%</p>
+         </div>
+      )}
       <video
         ref={videoRef}
         className="absolute inset-0 w-full h-full object-cover transition-all duration-200 will-change-transform"
@@ -1331,7 +1624,34 @@ function VideoStage({ videoRef, canvasRef, detectedLabel, confidence, isLocked, 
         muted
         style={videoStyle}
       />
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+      {/* Canvas is ALSO mirrored to match the mirrored video */}
+      <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full pointer-events-none origin-center ${status !== "Ready" ? "hidden" : ""}`} style={{ transform: 'scaleX(-1)' }} />
+      
+      {/* VERIFICATION RING */}
+      {status === "Ready" && verificationProgress > 0 && verificationProgress < 100 && !detectedLabel && (
+         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+             <div className="relative w-32 h-32 flex items-center justify-center">
+                 {/* Background Circle */}
+                 <svg className="w-full h-full transform -rotate-90">
+                    <circle cx="64" cy="64" r="60" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-muted/30" />
+                    <circle 
+                        cx="64" cy="64" r="60" 
+                        stroke="currentColor" strokeWidth="8" 
+                        fill="transparent" 
+                        strokeDasharray={377} // 2 * PI * 60
+                        strokeDashoffset={377 - (377 * verificationProgress) / 100}
+                        className="text-primary transition-all duration-100 ease-linear"
+                        strokeLinecap="round"
+                    />
+                 </svg>
+                 <div className="absolute text-2xl font-bold font-mono text-primary animate-pulse">
+                    {verificationProgress}%
+                 </div>
+             </div>
+             <p className="text-center font-bold text-white drop-shadow-md mt-4 uppercase tracking-widest text-sm">Verifying...</p>
+         </div>
+      )}
+
       <div className="absolute top-2 right-2">
         {isScanning && <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_red]" />}
       </div>
